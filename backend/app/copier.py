@@ -138,6 +138,9 @@ def remove_order_mapping(dhan_order_id: str):
 @router.post("/api/webhook")
 async def receive_webhook(request: Request):
     payload = await request.json()
+
+    if payload.get("type") == "status":
+        return {"status": "accepted", "reason": "heartbeat"}
     
     if not is_copier_enabled():
         await manager.broadcast(json.dumps({
@@ -151,9 +154,6 @@ async def receive_webhook(request: Request):
         "data": payload
     }
     await manager.broadcast(json.dumps(log_msg))
-
-    if payload.get("type") == "status":
-        return {"status": "accepted", "reason": "heartbeat"}
 
     is_dhan = "dhanClientId" in payload or "orderStatus" in payload
 
