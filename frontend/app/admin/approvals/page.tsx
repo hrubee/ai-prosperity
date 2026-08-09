@@ -133,8 +133,8 @@ export default function AdminApprovalsPage() {
             {filteredApprovals.map((item) => (
               <div key={item.user_id} className="card p-5 flex flex-col gap-4 relative">
                 <div className="flex justify-between items-start gap-4">
-                  <div>
-                    <h3 className="font-semibold text-white text-lg">{item.name || "Unknown Name"}</h3>
+                  <div className="min-w-0">
+                    <h3 className="font-semibold text-white text-lg truncate" title={item.name || "Unknown Name"}>{item.name || "Unknown Name"}</h3>
                     <p className="text-sm text-muted break-all">{item.email}</p>
                     <p className="text-sm font-mono mt-1 text-slate-300">{formatPhone(item.phone)}</p>
                   </div>
@@ -192,7 +192,7 @@ export default function AdminApprovalsPage() {
 
                 <div className="mt-auto pt-4 border-t border-ink-800">
                   {(item.payment_status === "pending" || item.payment_status === "pending_verification") && item.screenshot ? (
-                    <div className="flex gap-3">
+                    <div className="flex flex-wrap gap-3">
                       <button
                         className="btn-gold flex-1 text-sm py-2"
                         onClick={() => handleApprove(item.user_id, true)}

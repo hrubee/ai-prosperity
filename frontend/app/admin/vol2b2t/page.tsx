@@ -78,7 +78,7 @@ export default function Vol2b2tDashboard() {
           
           <div className="mb-10 overflow-hidden rounded-xl border border-ink-800 bg-ink-900/40">
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
+              <table className="w-full text-left text-sm whitespace-nowrap">
                 <thead className="bg-black/20 text-slate-400">
                   <tr>
                     <th className="p-4 font-medium">Coin</th>

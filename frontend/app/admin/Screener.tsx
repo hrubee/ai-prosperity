@@ -216,7 +216,7 @@ export function Screener() {
       {!err && filtered.length > 0 && (
         <div className="card overflow-hidden p-0">
           <div className="max-h-[32rem] overflow-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm whitespace-nowrap">
               <thead className="sticky top-0 bg-ink-950/95 text-left text-xs uppercase tracking-wider text-muted backdrop-blur">
                 <tr>
                   <th className="px-4 py-2.5">Symbol</th>

@@ -150,9 +150,9 @@ export default function Dashboard() {
   return (
     <main className="min-h-screen">
       <header className="border-b border-ink-800 bg-ink-950/70">
-        <div className="container-x flex h-16 items-center justify-between">
+        <div className="container-x flex min-h-[4rem] flex-wrap items-center justify-between gap-4 py-3">
           <Logo />
-          <div className="flex items-center gap-3 text-sm">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-sm">
             {me?.subscription && <span className="pill capitalize">{me.subscription.package} plan</span>}
             <span className={`pill ${paymentApproved ? "bg-gain/20 text-gain" : "bg-loss/20 text-loss"}`}>
               {paymentApproved ? "Payment Approved" : "Payment Pending"}

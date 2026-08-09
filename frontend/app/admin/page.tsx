@@ -104,7 +104,7 @@ export default function Admin() {
             <p className="py-6 text-center text-sm text-muted">Loading…</p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full text-sm whitespace-nowrap">
                 <thead className="text-left text-xs uppercase tracking-wider text-muted">
                   <tr>
                     <th className="pb-2">Client</th>

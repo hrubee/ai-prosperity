@@ -45,7 +45,7 @@ export default function AccountPage() {
   return (
     <main className="min-h-screen">
       <header className="border-b border-ink-800 bg-ink-950/70">
-        <div className="container-x flex h-16 items-center justify-between">
+        <div className="container-x flex min-h-[4rem] flex-wrap items-center justify-between gap-4 py-3">
           <Logo />
           <Link href="/dashboard" className="btn-ghost !px-3 !py-1.5 text-sm">← Dashboard</Link>
         </div>

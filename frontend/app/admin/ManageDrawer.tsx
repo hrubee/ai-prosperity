@@ -69,7 +69,7 @@ export function ManageDrawer({
       {/* backdrop */}
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       {/* panel */}
-      <div className="relative h-full w-full max-w-md overflow-y-auto border-l border-ink-700 bg-ink-900 p-6 shadow-2xl">
+      <div className="relative h-full w-full max-w-md overflow-y-auto border-l border-ink-700 bg-ink-900 p-4 sm:p-6 shadow-2xl">
         <div className="mb-5 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-white">Manage client</h2>
           <button className="text-muted hover:text-white" onClick={onClose}>✕</button>
