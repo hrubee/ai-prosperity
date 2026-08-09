@@ -285,35 +285,7 @@ export default function Dashboard() {
             {/* Tradejini (Indian F&O) connection */}
             {paymentApproved && <TradejiniPanel tj={tj} onReload={load} />}
 
-            {/* Connection banner */}
-            {paymentApproved && (
-              <div className={`card mb-6 flex flex-col items-start justify-between gap-3 p-5 sm:flex-row sm:items-center ${connOk ? "" : "border-loss/50"}`}>
-                <div className="flex items-center gap-3">
-                  <span className={`h-2.5 w-2.5 rounded-full ${connOk ? "bg-gain" : "bg-loss"}`} />
-                  <div>
-                    <p className="font-semibold text-white">
-                      {connOk
-                        ? "Delta account connected — live"
-                        : me?.connection?.paused
-                        ? "Trading paused"
-                        : "Account not connected"}
-                    </p>
-                    <p className="text-sm text-muted">
-                      {connOk
-                        ? "Signals are executing on your account."
-                        : "Connect your Delta key to start receiving trades."}
-                    </p>
-                  </div>
-                </div>
-                {me?.connection ? (
-                  <button className="btn-ghost text-sm" onClick={togglePause} disabled={pausing}>
-                    {me.connection.paused ? "Resume trading" : "Pause trading"}
-                  </button>
-                ) : (
-                  <Link href="/connect" className="btn-gold text-sm">Connect Delta</Link>
-                )}
-              </div>
-            )}
+
 
 
 
