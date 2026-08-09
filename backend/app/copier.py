@@ -152,6 +152,9 @@ async def receive_webhook(request: Request):
     }
     await manager.broadcast(json.dumps(log_msg))
 
+    if payload.get("type") == "status":
+        return {"status": "accepted", "reason": "heartbeat"}
+
     is_dhan = "dhanClientId" in payload or "orderStatus" in payload
 
     dhan_order_id = ""

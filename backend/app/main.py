@@ -17,29 +17,118 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from . import auth, dodo, orderbook, screener, signal_bus, tradejini, tradejini_auth
+from .dhan_poller import run_poller_async
+import asyncio
+from . import auth, dodo, orderbook, screener, signal_bus, tradejini, tradejini_auth, vol2b2t, copier
 from .config import settings
 from .crypto import decrypt_secret, encrypt_secret
 from .db import get_db
 from .delta import DeltaClient, DeltaError
-from .models import BrainEvent, ClientOrder, DeltaConnection, DhanConnection, PaymentScreenshot, Signal, Subscription, TradejiniConnection, User, PricingPlan, StraddlePosition
-from .vol2b2t import router as vol2b2t_router
-from .copier import router as copier_router
-from .dhan_poller import run_poller_async
-import asyncio
+from .models import BrainEvent, ClientOrder, DeltaConnection, DhanConnection, PaymentScreenshot, PricingPlan, Signal, Subscription, TradejiniConnection, User
+from .packages import PACKAGES
 
 log = logging.getLogger("api")
 app = FastAPI(title="AI Prosperity API", version="0.1.0")
 
-app.include_router(vol2b2t_router, prefix="/vol2b2t")
-app.include_router(copier_router)
+app.include_router(vol2b2t.router, prefix="/vol2b2t")
+app.include_router(copier.router)
 
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(run_poller_async())
-    from .xts_interactive_ws import start_xts_websockets
-    from .copier import manager
-    asyncio.create_task(start_xts_websockets(manager.broadcast))
+
+@app.get("/plans")
+def get_plans(db: Session = Depends(get_db)):
+    """Return active pricing plans formatted as a dictionary keyed by months for the frontend."""
+    plans = db.query(PricingPlan).filter(PricingPlan.is_active == True).all()
+    # The frontend expects plansObj: Record<string, { name: string; price_inr: number; months: number }>
+    return {str(p.months): {"name": p.name, "price_inr": p.price_inr, "months": p.months} for p in plans}
+
+import base64
+@app.get("/payment/qr")
+def get_payment_qr():
+    """Return the UPI QR code base64."""
+    qr_path = os.path.join(os.path.dirname(__file__), "..", "qr.jpeg")
+    try:
+        with open(qr_path, "rb") as f:
+            qr_base64 = base64.b64encode(f.read()).decode("utf-8")
+    except Exception:
+        qr_base64 = settings.upi_qr_base64
+
+    if not qr_base64:
+        raise HTTPException(status_code=404, detail="QR code not found")
+
+    return {
+        "qr_base64": qr_base64,
+        "amount_inr": settings.upi_qr_amount_inr,
+        "name": settings.upi_qr_name,
+        "upi_id": settings.upi_qr_upi_id
+    }
+
+
+class ScreenshotUploadRequest(BaseModel):
+    image_b64: str
+    mime_type: str
+
+@app.post("/payment/upload-screenshot")
+def upload_screenshot(body: ScreenshotUploadRequest, user: User = Depends(auth.current_user), db: Session = Depends(get_db)):
+    from datetime import datetime, timezone
+    
+    screenshot = db.query(PaymentScreenshot).filter(PaymentScreenshot.user_id == user.id).one_or_none()
+    
+    if screenshot:
+        screenshot.image_b64 = body.image_b64
+        screenshot.mime_type = body.mime_type
+        screenshot.status = "pending"
+        screenshot.review_note = None
+        screenshot.reviewed_by = None
+        screenshot.reviewed_at = None
+        screenshot.created_at = datetime.now(timezone.utc)
+    else:
+        screenshot = PaymentScreenshot(
+            user_id=user.id,
+            image_b64=body.image_b64,
+            mime_type=body.mime_type,
+            status="pending"
+        )
+        db.add(screenshot)
+    
+    if user.payment_status != "approved":
+        user.payment_status = "pending_verification"
+        
+    db.commit()
+    return {"ok": True, "status": "pending_verification"}
+
+
+@app.delete("/payment/screenshot")
+def delete_payment_screenshot(user: User = Depends(auth.current_user), db: Session = Depends(get_db)):
+    screenshot = db.query(PaymentScreenshot).filter(PaymentScreenshot.user_id == user.id).one_or_none()
+    if screenshot:
+        db.delete(screenshot)
+        if user.payment_status == "pending_verification":
+            user.payment_status = "pending"
+        db.commit()
+    return {"ok": True}
+
+
+@app.get("/payment/status")
+def get_payment_status(user: User = Depends(auth.current_user), db: Session = Depends(get_db)):
+    screenshot = db.query(PaymentScreenshot).filter(PaymentScreenshot.user_id == user.id).one_or_none()
+    
+    screenshot_data = None
+    if screenshot:
+        screenshot_data = {
+            "id": screenshot.id,
+            "status": screenshot.status,
+            "image_b64": screenshot.image_b64,
+            "mime_type": screenshot.mime_type,
+            "review_note": screenshot.review_note
+        }
+        
+    return {
+        "payment_status": user.payment_status,
+        "screenshot": screenshot_data
+    }
 
 
 app.add_middleware(
@@ -88,9 +177,8 @@ class TradejiniConnectRequest(BaseModel):
     totp_seed: str
 
 class DhanConnectRequest(BaseModel):
-    api_key: str
-    api_secret: str
-    totp_seed: str  # base32 TOTP secret — stored encrypted for daily AUTO-login
+    client_id: str
+    access_token: str  # base32 TOTP secret — stored encrypted for daily AUTO-login
 
 
 class CheckoutRequest(BaseModel):
@@ -100,7 +188,38 @@ class CheckoutRequest(BaseModel):
 # ── health ─────────────────────────────────────────────────
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"ok": True, "status": "pending_verification"}
+
+
+@app.delete("/payment/screenshot")
+def delete_payment_screenshot(user: User = Depends(auth.current_user), db: Session = Depends(get_db)):
+    screenshot = db.query(PaymentScreenshot).filter(PaymentScreenshot.user_id == user.id).one_or_none()
+    if screenshot:
+        db.delete(screenshot)
+        if user.payment_status == "pending_verification":
+            user.payment_status = "pending"
+        db.commit()
+    return {"ok": True}
+
+
+@app.get("/payment/status")
+def get_payment_status(user: User = Depends(auth.current_user), db: Session = Depends(get_db)):
+    screenshot = db.query(PaymentScreenshot).filter(PaymentScreenshot.user_id == user.id).one_or_none()
+    
+    screenshot_data = None
+    if screenshot:
+        screenshot_data = {
+            "id": screenshot.id,
+            "status": screenshot.status,
+            "image_b64": screenshot.image_b64,
+            "mime_type": screenshot.mime_type,
+            "review_note": screenshot.review_note
+        }
+        
+    return {
+        "payment_status": user.payment_status,
+        "screenshot": screenshot_data
+    }
 
 
 # ── auth ───────────────────────────────────────────────────
@@ -266,19 +385,6 @@ def tradejini_connect(body: TradejiniConnectRequest, user: User = Depends(auth.c
     conn.status = "connected"
     conn.paused = False
     conn.expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in or 86400))
-    
-    # Activate subscription if waiting
-    sub = db.query(Subscription).filter(Subscription.user_id == user.id).one_or_none()
-    if sub and sub.status == "approved_waiting_connection":
-        # Package is stored as string like "3" or "12"
-        try:
-            months = int(sub.package)
-            sub.status = "active"
-            sub.current_period_end = datetime.now(timezone.utc) + timedelta(days=months * 30)
-            log.info("activated subscription for %s (%s months)", user.id, months)
-        except ValueError:
-            pass
-            
     db.commit()
     return {"connected": True, "expires_at": conn.expires_at.isoformat()}
 
@@ -351,24 +457,19 @@ def tradejini_disconnect(user: User = Depends(auth.current_user), db: Session = 
 
 @app.post("/admin/dhan/connect")
 def dhan_connect(body: DhanConnectRequest, _: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
-    api_key = body.api_key.strip()
-    api_secret = body.api_secret.strip()
-    totp_seed = body.totp_seed.strip().replace(" ", "")
+    client_id = body.client_id.strip()
+    access_token = body.access_token.strip()
     
-    if not api_key or not api_secret or not totp_seed:
-        raise HTTPException(status_code=400, detail="API Key, Secret, and TOTP Seed are required")
+    if not client_id or not access_token:
+        raise HTTPException(status_code=400, detail="Client ID and Access Token are required")
     
-    # Check if this API Key is already configured
-    conn = db.query(DhanConnection).filter(DhanConnection.api_key == api_key).one_or_none()
+    # We use client_id in the api_key column to keep schema backwards compatible for now
+    conn = db.query(DhanConnection).filter(DhanConnection.api_key == client_id).one_or_none()
     if conn is None:
-        conn = DhanConnection(api_key=api_key, access_token_encrypted="")
+        conn = DhanConnection(api_key=client_id, client_id=client_id, access_token_encrypted="")
         db.add(conn)
         
-    conn.api_secret_encrypted = encrypt_secret(api_secret)
-    conn.totp_seed_encrypted = encrypt_secret(totp_seed)
-    # Clear any old token so a fresh one is minted on next access
-    conn.access_token_encrypted = ""
-    conn.expires_at = None
+    conn.access_token_encrypted = encrypt_secret(access_token)
     conn.status = "connected"
     conn.paused = False
     db.commit()
@@ -379,15 +480,15 @@ def dhan_connect(body: DhanConnectRequest, _: User = Depends(auth.require_admin)
 def get_dhan_accounts(_: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
     conns = db.query(DhanConnection).all()
     return [{
-        "client_id": c.api_key, # keep key as client_id for frontend compatibility
+        "client_id": c.client_id,
         "status": c.status,
         "paused": c.paused,
     } for c in conns]
 
 
-@app.post("/admin/dhan/{api_key}/pause")
-def dhan_pause(api_key: str, paused: bool = True, _: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
-    conn = db.query(DhanConnection).filter(DhanConnection.api_key == api_key).one_or_none()
+@app.post("/admin/dhan/{client_id}/pause")
+def dhan_pause(client_id: str, paused: bool = True, _: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
+    conn = db.query(DhanConnection).filter(DhanConnection.client_id == client_id).one_or_none()
     if conn is None:
         raise HTTPException(status_code=404, detail="Dhan connection not found")
     conn.paused = paused
@@ -395,9 +496,9 @@ def dhan_pause(api_key: str, paused: bool = True, _: User = Depends(auth.require
     return {"paused": conn.paused}
 
 
-@app.post("/admin/dhan/{api_key}/disconnect")
-def dhan_disconnect(api_key: str, _: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
-    conn = db.query(DhanConnection).filter(DhanConnection.api_key == api_key).one_or_none()
+@app.post("/admin/dhan/{client_id}/disconnect")
+def dhan_disconnect(client_id: str, _: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
+    conn = db.query(DhanConnection).filter(DhanConnection.client_id == client_id).one_or_none()
     if conn is not None:
         db.delete(conn)
         db.commit()
@@ -434,43 +535,112 @@ async def tradejini_webhook_event(request: Request):
 
 
 # ── subscriptions / payments ───────────────────────────────
-@app.get("/plans")
-def get_plans(db: Session = Depends(get_db)):
-    plans = db.query(PricingPlan).filter(PricingPlan.is_active == True).order_by(PricingPlan.months).all()
-    return {str(p.months): {"name": p.name, "price_inr": p.price_inr, "months": p.months} for p in plans}
+@app.get("/packages")
+def packages():
+    return {pid: {"name": p.name, "price_inr": p.price_inr} for pid, p in PACKAGES.items()}
 
 
-@app.put("/admin/plans/{months}")
-def update_plan(months: int, body: dict, _: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
-    plan = db.query(PricingPlan).filter(PricingPlan.months == months).one_or_none()
-    if not plan:
-        raise HTTPException(status_code=404, detail="Plan not found")
-    if "price_inr" in body:
-        plan.price_inr = int(body["price_inr"])
+
+class AdminApprovePaymentRequest(BaseModel):
+    approve: bool
+    note: str | None = None
+
+@app.get("/admin/approvals")
+def admin_get_approvals(admin: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
+    users = db.query(User).filter(User.payment_status.in_(["pending", "pending_verification"])).all()
+    # also fetch users with a screenshot even if their status is approved or rejected, to show history
+    # Or actually let's just join the screenshot table.
+    
+    # We'll fetch all screenshots and the corresponding users.
+    screenshots = db.query(PaymentScreenshot).order_by(PaymentScreenshot.created_at.desc()).all()
+    
+    # Let's map user_ids
+    user_ids = [s.user_id for s in screenshots]
+    users_with_ss = db.query(User).filter(User.id.in_(user_ids)).all()
+    user_map = {u.id: u for u in users_with_ss}
+    
+    res = []
+    # Add users with screenshots
+    for s in screenshots:
+        u = user_map.get(s.user_id)
+        if not u:
+            continue
+        res.append({
+            "user_id": u.id,
+            "name": u.name,
+            "email": u.email,
+            "phone": u.phone,
+            "payment_status": u.payment_status,
+            "screenshot": {
+                "status": s.status,
+                "mime_type": s.mime_type,
+                "image_b64": s.image_b64,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+                "reviewed_at": s.reviewed_at.isoformat() if s.reviewed_at else None,
+                "review_note": s.review_note
+            }
+        })
+        
+    # Add users who are pending but have NO screenshot uploaded yet
+    pending_users = db.query(User).filter(
+        User.payment_status.in_(["pending", "pending_verification"]),
+        ~User.id.in_(user_ids)
+    ).all()
+    
+    for u in pending_users:
+        res.append({
+            "user_id": u.id,
+            "name": u.name,
+            "email": u.email,
+            "phone": u.phone,
+            "payment_status": u.payment_status,
+            "screenshot": None
+        })
+        
+    return res
+
+@app.post("/admin/approve-payment/{user_id}")
+def admin_approve_payment(
+    user_id: str,
+    req: AdminApprovePaymentRequest,
+    admin: User = Depends(auth.require_admin),
+    db: Session = Depends(get_db)
+):
+    target_user = db.query(User).filter(User.id == user_id).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    screenshot = db.query(PaymentScreenshot).filter(PaymentScreenshot.user_id == user_id).first()
+    
+    status_str = "approved" if req.approve else "rejected"
+    target_user.payment_status = status_str
+    
+    if screenshot:
+        screenshot.status = status_str
+        screenshot.reviewed_by = admin.id
+        import datetime
+        screenshot.reviewed_at = datetime.datetime.utcnow()
+        screenshot.review_note = req.note
+        
     db.commit()
-    return {"ok": True, "price_inr": plan.price_inr}
+    return {"ok": True, "status": status_str}
 
 
 @app.post("/checkout")
 def checkout(body: CheckoutRequest, user: User = Depends(auth.current_user), db: Session = Depends(get_db)):
-    try:
-        months = int(body.package)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="unknown package")
-    
-    plan = db.query(PricingPlan).filter(PricingPlan.months == months, PricingPlan.is_active == True).one_or_none()
+    plan = db.query(PricingPlan).filter(PricingPlan.months == int(body.package), PricingPlan.is_active == True).one_or_none()
     if not plan:
         raise HTTPException(status_code=400, detail="unknown package")
-        
-    # Pre-create a pending subscription
+    # Pre-create a pending subscription so the webhook can attribute it.
     sub = db.query(Subscription).filter(Subscription.user_id == user.id).one_or_none()
     if sub is None:
-        sub = Subscription(user_id=user.id, package=str(plan.months), status="pending")
+        sub = Subscription(user_id=user.id, package=body.package, status="pending")
         db.add(sub)
     else:
-        sub.package = str(plan.months)
+        sub.package = body.package
     db.flush()
-    return {"ok": True}
+    db.commit()
+    return {"checkout_url": None, "status": "pending_manual_payment"}
 
 
 @app.post("/webhooks/dodo")
@@ -485,182 +655,6 @@ async def dodo_webhook(request: Request, db: Session = Depends(get_db)):
     return {"received": True}
 
 
-# ── Offline/UPI Payment Flow ───────────────────────────────────
-class QRCodeResponse(BaseModel):
-    qr_base64: str
-    amount_inr: int
-    name: str
-    upi_id: str
-
-
-@app.get("/payment/qr")
-def get_qr_code(user: User = Depends(auth.current_user)):
-    """Return the UPI QR code for offline payment."""
-    if not settings.upi_qr_base64:
-        raise HTTPException(status_code=503, detail="UPI QR code not configured")
-    return QRCodeResponse(
-        qr_base64=settings.upi_qr_base64,
-        amount_inr=settings.upi_qr_amount_inr,
-        name=settings.upi_qr_name,
-        upi_id=settings.upi_qr_upi_id,
-    )
-
-
-class ScreenshotUploadRequest(BaseModel):
-    image_b64: str
-    mime_type: str
-
-
-@app.post("/payment/upload-screenshot")
-def upload_screenshot(
-    body: ScreenshotUploadRequest,
-    user: User = Depends(auth.current_user),
-    db: Session = Depends(get_db),
-):
-    """Upload or replace payment proof screenshot."""
-    # Validate mime type
-    if body.mime_type not in ("image/png", "image/jpeg", "image/jpg"):
-        raise HTTPException(status_code=400, detail="Invalid image type. Use PNG or JPEG.")
-    # Basic size check (base64 ~1.37x original, so 500KB ≈ 685KB base64)
-    if len(body.image_b64) > 700_000:
-        raise HTTPException(status_code=400, detail="Image too large (max ~500KB)")
-
-    existing = db.query(PaymentScreenshot).filter(PaymentScreenshot.user_id == user.id).one_or_none()
-    if existing:
-        existing.image_b64 = body.image_b64
-        existing.mime_type = body.mime_type
-        existing.status = "pending"  # reset to pending on re-upload
-        existing.reviewed_by = None
-        existing.reviewed_at = None
-        existing.review_note = None
-    else:
-        db.add(PaymentScreenshot(
-            user_id=user.id,
-            image_b64=body.image_b64,
-            mime_type=body.mime_type,
-            status="pending",
-        ))
-    user.payment_status = "pending"
-    db.flush()
-    return {"ok": True, "status": "pending"}
-
-
-@app.delete("/payment/screenshot")
-def delete_screenshot(user: User = Depends(auth.current_user), db: Session = Depends(get_db)):
-    """Delete the uploaded screenshot (only allowed while pending)."""
-    existing = db.query(PaymentScreenshot).filter(PaymentScreenshot.user_id == user.id).one_or_none()
-    if existing is None:
-        raise HTTPException(status_code=404, detail="No screenshot to delete")
-    if existing.status != "pending":
-        raise HTTPException(status_code=400, detail="Cannot delete: already reviewed")
-    db.delete(existing)
-    user.payment_status = "pending"
-    return {"ok": True}
-
-
-@app.get("/payment/status")
-def payment_status(user: User = Depends(auth.current_user), db: Session = Depends(get_db)):
-    """Get current payment/screenshot status for this user."""
-    ss = db.query(PaymentScreenshot).filter(PaymentScreenshot.user_id == user.id).one_or_none()
-    return {
-        "payment_status": user.payment_status,
-        "screenshot": None if ss is None else {
-            "status": ss.status,
-            "mime_type": ss.mime_type,
-            "image_b64": ss.image_b64,  # include base64 for frontend preview
-            "created_at": ss.created_at.isoformat(),
-            "reviewed_at": ss.reviewed_at.isoformat() if ss.reviewed_at else None,
-            "review_note": ss.review_note,
-        }
-    }
-
-
-# ── admin: payment approvals ──────────────────────────────────
-@app.get("/admin/approvals")
-def admin_approvals(_: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
-    """List all pending/approved/rejected payment screenshots with user info."""
-    rows = (
-        db.query(User, PaymentScreenshot)
-        .outerjoin(PaymentScreenshot, PaymentScreenshot.user_id == User.id)
-        .all()
-    )
-    result = []
-    for u, ss in rows:
-        item = {
-            "user_id": u.id,
-            "name": u.name,
-            "email": u.email,
-            "phone": u.phone,
-            "payment_status": u.payment_status,
-        }
-        if ss:
-            item["screenshot"] = {
-                "status": ss.status,
-                "mime_type": ss.mime_type,
-                "image_b64": ss.image_b64,
-                "created_at": ss.created_at.isoformat(),
-                "reviewed_at": ss.reviewed_at.isoformat() if ss.reviewed_at else None,
-                "review_note": ss.review_note,
-            }
-        result.append(item)
-    # Sort: pending first, then by created_at desc
-    result.sort(key=lambda x: (x.get("screenshot", {}).get("status") != "pending",
-                                x.get("screenshot", {}).get("created_at") or ""),
-               reverse=True)
-    return result
-
-
-class ApprovePaymentRequest(BaseModel):
-    approve: bool
-    note: str = ""
-
-
-@app.post("/admin/approve-payment/{user_id}")
-def approve_payment(
-    user_id: str,
-    body: ApprovePaymentRequest,
-    admin: User = Depends(auth.require_admin),
-    db: Session = Depends(get_db),
-):
-    """Approve or reject a user's payment screenshot."""
-    u = db.get(User, user_id)
-    if u is None:
-        raise HTTPException(status_code=404, detail="user not found")
-    ss = db.query(PaymentScreenshot).filter(PaymentScreenshot.user_id == user_id).one_or_none()
-    if ss is None:
-        raise HTTPException(status_code=404, detail="no screenshot for this user")
-    if ss.status != "pending":
-        raise HTTPException(status_code=400, detail=f"already {ss.status}")
-
-    ss.status = "approved" if body.approve else "rejected"
-    ss.reviewed_by = admin.id
-    ss.reviewed_at = datetime.now(timezone.utc)
-    ss.review_note = body.note or None
-    u.payment_status = "approved" if body.approve else "rejected"
-    
-    if body.approve:
-        sub = db.query(Subscription).filter(Subscription.user_id == user_id).one_or_none()
-        if sub:
-            tj = db.query(TradejiniConnection).filter(TradejiniConnection.user_id == user_id).one_or_none()
-            if tj and tj.status == "connected" and tradejini_auth.has_auto_creds(tj):
-                # Tradejini already connected, activate immediately
-                try:
-                    months = int(sub.package)
-                    sub.status = "active"
-                    sub.current_period_end = datetime.now(timezone.utc) + timedelta(days=months * 30)
-                except ValueError:
-                    sub.status = "active" # fallback for legacy packages
-            else:
-                sub.status = "approved_waiting_connection"
-    else:
-        sub = db.query(Subscription).filter(Subscription.user_id == user_id).one_or_none()
-        if sub and sub.status in ("pending", "approved_waiting_connection"):
-            sub.status = "failed"
-            
-    db.flush()
-    return {"ok": True, "status": u.payment_status}
-
-
 # ── admin ──────────────────────────────────────────────────
 @app.get("/admin/stats")
 def admin_stats(_: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
@@ -671,23 +665,20 @@ def admin_stats(_: User = Depends(auth.require_admin), db: Session = Depends(get
         .group_by(Subscription.package, Subscription.status)
         .all()
     )
-    plans = db.query(PricingPlan).all()
     by_package = {
-        str(p.months): {"name": p.name, "price_inr": p.price_inr, "active": 0, "total": 0}
-        for p in plans
+        pid: {"name": p.name, "price_inr": p.price_inr, "active": 0, "total": 0}
+        for pid, p in PACKAGES.items()
     }
     active_subscribers = 0
     mrr_inr = 0
     for pkg, st, cnt in rows:
         if pkg not in by_package:
-            # Handle legacy packages (starter, growth, pro) if any exist
-            by_package[pkg] = {"name": pkg, "price_inr": 0, "active": 0, "total": 0}
-        
+            continue
         by_package[pkg]["total"] += cnt
         if st == "active":
             by_package[pkg]["active"] += cnt
             active_subscribers += cnt
-            mrr_inr += by_package[pkg]["price_inr"] * cnt
+            mrr_inr += PACKAGES[pkg].price_inr * cnt
     return {
         "total_clients": total_clients,
         "active_subscribers": active_subscribers,
@@ -695,6 +686,23 @@ def admin_stats(_: User = Depends(auth.require_admin), db: Session = Depends(get
         "by_package": by_package,
     }
 
+
+
+@app.get("/admin/dhan/token-status")
+def dhan_token_status(_: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
+    conn = db.query(DhanConnection).filter(DhanConnection.status == "connected").first()
+    if not conn:
+        return {"is_valid": False}
+    try:
+        from .crypto import decrypt_secret
+        token = decrypt_secret(conn.access_token_encrypted)
+    except:
+        token = None
+    return {
+        "is_valid": True,
+        "client_id": conn.client_id,
+        "access_token": token
+    }
 
 @app.get("/admin/clients")
 def admin_clients(_: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
@@ -710,7 +718,7 @@ def admin_clients(_: User = Depends(auth.require_admin), db: Session = Depends(g
             "id": u.id,
             "email": u.email,
             "package": s.package if s else None,
-            "subscription": ("expired" if s.status == "active" and not s.is_active else s.status) if s else None,
+            "subscription": s.status if s else None,
             "connection": c.status if c else None,
             "paused": c.paused if c else None,
             "sandbox": c.sandbox if c else None,
@@ -818,34 +826,6 @@ def admin_pause(user_id: str, paused: bool = True, _: User = Depends(auth.requir
     if t is not None:
         t.paused = paused
     return {"paused": paused}
-
-
-@app.delete("/admin/clients/{user_id}")
-def admin_delete_client(user_id: str, _: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
-    db.query(ClientOrder).filter_by(user_id=user_id).delete()
-    db.query(DeltaConnection).filter_by(user_id=user_id).delete()
-    db.query(TradejiniConnection).filter_by(user_id=user_id).delete()
-    db.query(StraddlePosition).filter_by(user_id=user_id).delete()
-    db.query(Subscription).filter_by(user_id=user_id).delete()
-    db.query(PaymentScreenshot).filter_by(user_id=user_id).delete()
-    db.query(User).filter_by(id=user_id).delete()
-    return {"result": "deleted"}
-
-
-class AdminUpdateSubscriptionRequest(BaseModel):
-    current_period_end_iso: str | None = None
-
-
-@app.post("/admin/clients/{user_id}/subscription")
-def admin_update_subscription(user_id: str, body: AdminUpdateSubscriptionRequest, _: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
-    sub = db.query(Subscription).filter_by(user_id=user_id).one_or_none()
-    if not sub:
-        return {"error": "no subscription found"}
-    if body.current_period_end_iso:
-        sub.current_period_end = datetime.fromisoformat(body.current_period_end_iso.replace("Z", "+00:00"))
-    else:
-        sub.current_period_end = None
-    return {"result": "updated"}
 
 
 @app.post("/admin/clients/{user_id}/force-close")

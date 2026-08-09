@@ -81,7 +81,7 @@ export default function AdminApprovalsPage() {
     });
   }
 
-  const pendingCount = approvals.filter(a => a.payment_status === "pending").length;
+  const pendingCount = approvals.filter(a => a.payment_status === "pending" || a.payment_status === "pending_verification").length;
 
   const filteredApprovals = approvals.filter((a) => {
     const q = searchQuery.toLowerCase();
@@ -142,7 +142,7 @@ export default function AdminApprovalsPage() {
                     className={`pill shrink-0 ${
                       item.payment_status === "approved"
                         ? "bg-gain/20 text-gain"
-                        : item.payment_status === "rejected"
+                        : item.payment_status === "rejected" || item.payment_status === "pending_manual_payment"
                         ? "bg-loss/20 text-loss"
                         : "bg-warning/20 text-warning"
                     }`}
@@ -191,7 +191,7 @@ export default function AdminApprovalsPage() {
                 </div>
 
                 <div className="mt-auto pt-4 border-t border-ink-800">
-                  {item.payment_status === "pending" && item.screenshot ? (
+                  {(item.payment_status === "pending" || item.payment_status === "pending_verification") && item.screenshot ? (
                     <div className="flex gap-3">
                       <button
                         className="btn-gold flex-1 text-sm py-2"
@@ -210,7 +210,7 @@ export default function AdminApprovalsPage() {
                     </div>
                   ) : item.payment_status === "approved" ? (
                     <span className="text-sm font-semibold text-gain block text-center">✓ Payment Approved</span>
-                  ) : item.payment_status === "rejected" ? (
+                  ) : item.payment_status === "rejected" || item.payment_status === "pending_manual_payment" ? (
                     <span className="text-sm font-semibold text-loss block text-center">✗ Payment Rejected</span>
                   ) : (
                     <span className="text-sm text-muted block text-center">Awaiting user action</span>

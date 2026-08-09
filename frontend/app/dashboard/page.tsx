@@ -22,11 +22,15 @@ export default function Dashboard() {
   const [uploading, setUploading] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState<{ payment_status: string; screenshot: any } | null>(null);
   const [plans, setPlans] = useState<Record<string, {name: string; price_inr: number; months: number}>>({});
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
 
   async function load() {
     try {
       const m = await api.me();
       setMe(m);
+      if (m.subscription?.package) {
+        setSelectedPlanId((prev) => prev || m.subscription?.package || null);
+      }
       if (m.connection?.status === "connected") {
         const [p, o] = await Promise.all([api.myPositions(), api.myOrders()]);
         setEquity(p.equity);
@@ -77,8 +81,8 @@ export default function Dashboard() {
   }
 
   // Determine plan-specific amount for display
-  const planFromUrl = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("plan") : null;
-  const displayAmount = planFromUrl && plans[planFromUrl] ? plans[planFromUrl].price_inr : (qrCode?.amount_inr || 5000);
+  const activePlanId = selectedPlanId || (me?.subscription?.package) || null;
+  const displayAmount = activePlanId && plans[activePlanId] ? plans[activePlanId].price_inr : (qrCode?.amount_inr || 5000);
 
   useEffect(() => {
     if (!isAuthed()) {
@@ -86,6 +90,8 @@ export default function Dashboard() {
       return;
     }
     const p = new URLSearchParams(window.location.search).get("tradejini");
+    const planFromUrl = new URLSearchParams(window.location.search).get("plan");
+    if (planFromUrl) setSelectedPlanId(planFromUrl);
     if (p === "connected") setNotice("Tradejini account connected ✓");
     else if (p) setNotice("Tradejini connection failed — please try again.");
     load();
@@ -157,11 +163,11 @@ export default function Dashboard() {
   }
 
   async function confirmPlan() {
-    if (!planFromUrl || !plans[planFromUrl]) return;
+    if (!activePlanId || !plans[activePlanId]) return;
     setPaymentLoading(true);
     try {
-      await api.checkout(planFromUrl);
-      setNotice(`Subscribed to ${plans[planFromUrl].name} plan! Please upload your payment proof.`);
+      await api.checkout(activePlanId);
+      setNotice(`Subscribed to ${plans[activePlanId].name} plan! Please upload your payment proof.`);
       await load(); // refresh me to update pending subscription package
     } catch (e: any) {
       setNotice(e.message || "Could not select plan");
@@ -207,17 +213,32 @@ export default function Dashboard() {
               <div className="card mb-6 p-5">
                 <h2 className="mb-4 font-semibold text-white">Complete Payment to Activate</h2>
                 <p className="mb-4 text-sm text-muted">
-                  Scan the UPI QR code below to pay <b>₹{displayAmount.toLocaleString()}</b> for your plan.
-                  After payment, upload a screenshot of the transaction for admin verification.
+                  Select your desired plan, scan the UPI QR code below to pay <b>₹{displayAmount.toLocaleString()}</b>, and upload a screenshot of the transaction for admin verification.
                 </p>
 
-                {me?.subscription?.package !== planFromUrl && planFromUrl && plans[planFromUrl] && (
-                  <div className="mb-6 flex justify-center">
-                    <button className="btn-gold" onClick={confirmPlan} disabled={paymentLoading}>
-                      Confirm selection: {plans[planFromUrl].name} (₹{plans[planFromUrl].price_inr})
-                    </button>
+                <div className="mb-6 flex flex-col items-center gap-3">
+                  <div className="w-full max-w-sm space-y-2">
+                    <label className="label">Select Plan</label>
+                    <select
+                      className="input w-full"
+                      value={activePlanId || ""}
+                      onChange={(e) => setSelectedPlanId(e.target.value)}
+                    >
+                      <option value="" disabled>Choose a plan...</option>
+                      {Object.values(plans).sort((a,b) => a.months - b.months).map((p) => (
+                        <option key={p.months} value={String(p.months)}>
+                          {p.name} - ₹{p.price_inr.toLocaleString()}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                )}
+                  
+                  {me?.subscription?.package !== activePlanId && activePlanId && plans[activePlanId] && (
+                    <button className="btn-gold mt-2" onClick={confirmPlan} disabled={paymentLoading}>
+                      Confirm Selection: {plans[activePlanId].name}
+                    </button>
+                  )}
+                </div>
 
                 {/* QR Code Display */}
                 {qrCode && (

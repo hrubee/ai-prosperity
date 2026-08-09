@@ -9,7 +9,6 @@ export default async function Home() {
     .then((res) => res.json())
     .catch(() => ({}));
   const plans = Object.values(plansObj).sort((a, b) => a.months - b.months);
-
   return (
     <>
       <SiteHeader />
@@ -43,7 +42,6 @@ export default async function Home() {
           </div>
         </div>
       </section>
-
 
       {/* How it works */}
       <section id="how" className="container-x py-20">

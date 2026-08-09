@@ -44,16 +44,21 @@ export default function Vol2b2tDashboard() {
     const fetchData = () => {
       fetch("/api/vol2b2t/trades")
         .then((res) => res.json())
-        .then((data) => setTrades(data || []))
+        .then((data) => {
+          setTrades(Array.isArray(data) ? data : []);
+        })
         .catch((err) => console.error(err));
         
       fetch("/api/vol2b2t/screener")
         .then((res) => res.json())
         .then((data) => {
-          setScreener(data || []);
+          setScreener(Array.isArray(data) ? data : []);
           setLoading(false);
         })
-        .catch((err) => console.error(err));
+        .catch((err) => {
+          console.error(err);
+          setLoading(false);
+        });
     };
 
     fetchData();

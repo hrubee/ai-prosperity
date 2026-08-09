@@ -175,7 +175,7 @@ export const api = {
     req<{ paused: boolean }>(`/dhan/pause?paused=${paused}`, { method: "POST" }),
   dhanDisconnect: () => req<{ status: string }>("/dhan/disconnect", { method: "POST" }),
   dhanTokenStatus: () =>
-    req<{ expires_at: string | null; is_valid: boolean }>("/admin/dhan/token-status"),
+    req<{ is_valid: boolean; client_id?: string; access_token?: string }>("/admin/dhan/token-status"),
   dhanUpdateToken: (token: string) =>
     req<{ ok: boolean }>("/admin/dhan/update-token", {
       method: "POST",

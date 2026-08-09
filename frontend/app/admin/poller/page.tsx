@@ -44,7 +44,7 @@ export default function PollerMonitor() {
   const [tokenInput, setTokenInput] = useState("");
   const [updatingToken, setUpdatingToken] = useState(false);
 
-  const [tokenStatus, setTokenStatus] = useState<{ expires_at: string | null; is_valid: boolean } | null>(null);
+  const [tokenStatus, setTokenStatus] = useState<{ is_valid: boolean; client_id?: string; access_token?: string } | null>(null);
 
   const fetchTokenStatus = async () => {
     try {
@@ -234,7 +234,7 @@ export default function PollerMonitor() {
                 {tokenStatus ? (
                   tokenStatus.is_valid ? (
                     <span className="text-xs text-green-400 font-semibold bg-green-500/10 px-2 py-0.5 rounded border border-green-500/20">
-                      ✓ Active (Expires: {new Date(tokenStatus.expires_at || "").toLocaleString()})
+                      ✓ Active (Valid for 24h)
                     </span>
                   ) : (
                     <span className="text-xs text-red-400 font-semibold bg-red-500/10 px-2 py-0.5 rounded border border-red-500/20 animate-pulse">
