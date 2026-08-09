@@ -63,13 +63,14 @@ export default function Dashboard() {
   }
 
   // Determine plan-specific amount for display
-  const planFromUrl = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("plan") : null;
-  const planPrices: Record<string, number> = {
-    starter: 5000,
-    growth: 10000,
-    pro: 20000,
+  const [selectedPlan, setSelectedPlan] = useState<number>(1);
+  const planPrices: Record<number, number> = {
+    1: 5000,
+    3: 13500,
+    6: 24000,
+    12: 38400,
   };
-  const displayAmount = planFromUrl && planPrices[planFromUrl] ? planPrices[planFromUrl] : (qrCode?.amount_inr || 5000);
+  const displayAmount = planPrices[selectedPlan];
 
   useEffect(() => {
     if (!isAuthed()) {
@@ -183,9 +184,23 @@ export default function Dashboard() {
               <div className="card mb-6 p-5">
                 <h2 className="mb-4 font-semibold text-white">Complete Payment to Activate</h2>
                 <p className="mb-4 text-sm text-muted">
-                  Scan the UPI QR code below to pay <b>₹{displayAmount.toLocaleString()}/month</b>.
+                  Select your subscription plan, scan the UPI QR code below, and pay the exact amount shown.
                   After payment, upload a screenshot of the transaction for admin verification.
                 </p>
+
+                <div className="mb-6">
+                  <label className="mb-2 block text-sm font-medium text-white">Select Plan</label>
+                  <select 
+                    className="input w-full max-w-xs"
+                    value={selectedPlan}
+                    onChange={(e) => setSelectedPlan(Number(e.target.value))}
+                  >
+                    <option value={1}>1 Month - ₹5,000</option>
+                    <option value={3}>3 Months - ₹13,500</option>
+                    <option value={6}>6 Months - ₹24,000</option>
+                    <option value={12}>12 Months - ₹38,400</option>
+                  </select>
+                </div>
 
                 {/* QR Code Display */}
                 {qrCode && (
