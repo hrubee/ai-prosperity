@@ -3,11 +3,10 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Logo } from "@/components/nav";
-import { api, clearToken, isAuthed, type Me, type OrderRow, type Position } from "@/lib/api";
+import { api, clearToken, isAuthed, type Me, type OrderRow } from "@/lib/api";
 
 export default function Dashboard() {
   const [me, setMe] = useState<Me | null>(null);
-
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [pausing, setPausing] = useState(false);
@@ -20,18 +19,15 @@ export default function Dashboard() {
   const [screenshotFile, setScreenshotFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState<{ payment_status: string; screenshot: any } | null>(null);
-  const [plans, setPlans] = useState<Record<string, {name: string; price_inr: number; months: number}>>({});
-  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
 
   async function load() {
     try {
       const m = await api.me();
       setMe(m);
-      if (m.subscription?.package) {
-        setSelectedPlanId((prev) => prev || m.subscription?.package || null);
+      if (m.connection?.status === "connected") {
+        const o = await api.myOrders();
+        setOrders(o || []);
       }
-      const o = await api.myOrders();
-      setOrders(o || []);
     } catch {
       // unauthorized / backend down — fall through to the connect prompt
     }
@@ -66,18 +62,14 @@ export default function Dashboard() {
     }
   }
 
-  async function loadPlans() {
-    try {
-      const p = await api.getPlans();
-      setPlans(p);
-    } catch {
-      // ignore
-    }
-  }
-
   // Determine plan-specific amount for display
-  const activePlanId = selectedPlanId || (me?.subscription?.package) || null;
-  const displayAmount = activePlanId && plans[activePlanId] ? plans[activePlanId].price_inr : (qrCode?.amount_inr || 5000);
+  const planFromUrl = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("plan") : null;
+  const planPrices: Record<string, number> = {
+    starter: 5000,
+    growth: 10000,
+    pro: 20000,
+  };
+  const displayAmount = planFromUrl && planPrices[planFromUrl] ? planPrices[planFromUrl] : (qrCode?.amount_inr || 5000);
 
   useEffect(() => {
     if (!isAuthed()) {
@@ -85,14 +77,11 @@ export default function Dashboard() {
       return;
     }
     const p = new URLSearchParams(window.location.search).get("tradejini");
-    const planFromUrl = new URLSearchParams(window.location.search).get("plan");
-    if (planFromUrl) setSelectedPlanId(planFromUrl);
     if (p === "connected") setNotice("Tradejini account connected ✓");
     else if (p) setNotice("Tradejini connection failed — please try again.");
     load();
     loadPaymentStatus();
     loadQRCode();
-    loadPlans();
   }, []);
 
   const connOk = me?.connection?.status === "connected" && !me?.connection?.paused;
@@ -157,27 +146,13 @@ export default function Dashboard() {
     }
   }
 
-  async function confirmPlan() {
-    if (!activePlanId || !plans[activePlanId]) return;
-    setPaymentLoading(true);
-    try {
-      await api.checkout(activePlanId);
-      setNotice(`Subscribed to ${plans[activePlanId].name} plan! Please upload your payment proof.`);
-      await load(); // refresh me to update pending subscription package
-    } catch (e: any) {
-      setNotice(e.message || "Could not select plan");
-    } finally {
-      setPaymentLoading(false);
-    }
-  }
-
   return (
     <main className="min-h-screen">
       <header className="border-b border-ink-800 bg-ink-950/70">
         <div className="container-x flex h-16 items-center justify-between">
           <Logo />
           <div className="flex items-center gap-3 text-sm">
-            {me?.subscription && <span className="pill capitalize">{plans[me.subscription.package]?.name || me.subscription.package} plan</span>}
+            {me?.subscription && <span className="pill capitalize">{me.subscription.package} plan</span>}
             <span className={`pill ${paymentApproved ? "bg-gain/20 text-gain" : "bg-loss/20 text-loss"}`}>
               {paymentApproved ? "Payment Approved" : "Payment Pending"}
             </span>
@@ -208,32 +183,9 @@ export default function Dashboard() {
               <div className="card mb-6 p-5">
                 <h2 className="mb-4 font-semibold text-white">Complete Payment to Activate</h2>
                 <p className="mb-4 text-sm text-muted">
-                  Select your desired plan, scan the UPI QR code below to pay <b>₹{displayAmount.toLocaleString()}</b>, and upload a screenshot of the transaction for admin verification.
+                  Scan the UPI QR code below to pay <b>₹{displayAmount.toLocaleString()}/month</b>.
+                  After payment, upload a screenshot of the transaction for admin verification.
                 </p>
-
-                <div className="mb-6 flex flex-col items-center gap-3">
-                  <div className="w-full max-w-sm space-y-2">
-                    <label className="label">Select Plan</label>
-                    <select
-                      className="input w-full"
-                      value={activePlanId || ""}
-                      onChange={(e) => setSelectedPlanId(e.target.value)}
-                    >
-                      <option value="" disabled>Choose a plan...</option>
-                      {Object.values(plans).sort((a,b) => a.months - b.months).map((p) => (
-                        <option key={p.months} value={String(p.months)}>
-                          {p.name} - ₹{p.price_inr.toLocaleString()}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  
-                  {me?.subscription?.package !== activePlanId && activePlanId && plans[activePlanId] && (
-                    <button className="btn-gold mt-2" onClick={confirmPlan} disabled={paymentLoading}>
-                      Confirm Selection: {plans[activePlanId].name}
-                    </button>
-                  )}
-                </div>
 
                 {/* QR Code Display */}
                 {qrCode && (
@@ -331,66 +283,42 @@ export default function Dashboard() {
             )}
 
             {/* Tradejini (Indian F&O) connection */}
-            {paymentApproved && <TradejiniPanel tj={tj} waitingForConnection={me?.subscription?.status === "approved_waiting_connection"} onReload={load} />}
+            {paymentApproved && <TradejiniPanel tj={tj} onReload={load} />}
 
-
-
-            {/* Stat cards */}
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-              {[
-                ["Margin", `₹${(tj?.equity_inr ?? 0).toLocaleString("en-IN")}`],
-                ["Broker Status", tj?.connected ? "Live" : "Disconnected"],
-                ["Open positions", String(tj?.positions?.length ?? 0)],
-                ["Subscription", me?.subscription?.status ?? "none"],
-              ].map(([k, v]) => (
-                <div key={k} className="card p-5">
-                  <p className="text-xs uppercase tracking-wider text-muted">{k}</p>
-                  <p className="mt-1 text-lg font-semibold capitalize text-white">{v}</p>
+            {/* Connection banner */}
+            {paymentApproved && (
+              <div className={`card mb-6 flex flex-col items-start justify-between gap-3 p-5 sm:flex-row sm:items-center ${connOk ? "" : "border-loss/50"}`}>
+                <div className="flex items-center gap-3">
+                  <span className={`h-2.5 w-2.5 rounded-full ${connOk ? "bg-gain" : "bg-loss"}`} />
+                  <div>
+                    <p className="font-semibold text-white">
+                      {connOk
+                        ? "Delta account connected — live"
+                        : me?.connection?.paused
+                        ? "Trading paused"
+                        : "Account not connected"}
+                    </p>
+                    <p className="text-sm text-muted">
+                      {connOk
+                        ? "Signals are executing on your account."
+                        : "Connect your Delta key to start receiving trades."}
+                    </p>
+                  </div>
                 </div>
-              ))}
-            </div>
+                {me?.connection ? (
+                  <button className="btn-ghost text-sm" onClick={togglePause} disabled={pausing}>
+                    {me.connection.paused ? "Resume trading" : "Pause trading"}
+                  </button>
+                ) : (
+                  <Link href="/connect" className="btn-gold text-sm">Connect Delta</Link>
+                )}
+              </div>
+            )}
+
+
 
             {paymentApproved && (
-              <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
-                {/* Positions */}
-                <div className="card p-5 lg:col-span-2">
-                  <h2 className="mb-4 font-semibold text-white">Open positions</h2>
-                  {(!tj?.positions || tj.positions.length === 0) ? (
-                    <div className="py-8 flex flex-col items-center justify-center text-center">
-                      <div className="w-12 h-12 rounded-full bg-ink-800/50 flex items-center justify-center mb-3">
-                        <span className="text-xl">📊</span>
-                      </div>
-                      <p className="text-sm font-medium text-slate-300">No active positions</p>
-                      <p className="text-xs text-muted mt-1 max-w-xs">Waiting for the AI to identify the next high-probability setup.</p>
-                    </div>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead className="text-left text-xs uppercase tracking-wider text-muted bg-ink-900/50">
-                          <tr>
-                            <th className="pb-3 pt-3 pl-4 rounded-tl-lg">Symbol</th>
-                            <th className="pb-3 pt-3">Side</th>
-                            <th className="pb-3 pt-3 rounded-tr-lg">Size</th>
-                          </tr>
-                        </thead>
-                        <tbody className="text-slate-300">
-                          {tj.positions.map((p: any) => (
-                            <tr key={p.sym_id || p.symbol} className="border-t border-ink-800/60 hover:bg-ink-800/20 transition-colors">
-                              <td className="py-3 pl-4 font-medium text-white">{p.symbol}</td>
-                              <td className="py-3">
-                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${p.side.toLowerCase() === "buy" ? "bg-gain/10 text-gain border border-gain/20" : "bg-loss/10 text-loss border border-loss/20"}`}>
-                                  {p.side.toUpperCase()}
-                                </span>
-                              </td>
-                              <td className="py-3 font-mono">{p.size}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-
+              <div className="mt-6 max-w-3xl">
                 {/* Signal / order feed */}
                 <div className="card p-5">
                   <h2 className="mb-4 font-semibold text-white">Recent signals</h2>
@@ -438,19 +366,15 @@ export default function Dashboard() {
 
 type TjState = Awaited<ReturnType<typeof api.myTradejini>> | null;
 
-function TradejiniPanel({ tj, waitingForConnection, onReload }: { tj: TjState; waitingForConnection: boolean; onReload: () => Promise<void> }) {
+function TradejiniPanel({ tj, onReload }: { tj: TjState; onReload: () => Promise<void> }) {
   // Not yet set up — no credentials stored
   if (!tj || !tj.connected_once) {
     return (
-      <div className={`card mb-6 flex flex-col items-start justify-between gap-3 p-4 sm:flex-row sm:items-center ${waitingForConnection ? "border-gold-500/60 shadow-glow bg-ink-800/40" : ""}`}>
+      <div className="card mb-6 flex flex-col items-start justify-between gap-3 p-4 sm:flex-row sm:items-center">
         <p className="text-sm text-muted">
-          {waitingForConnection ? (
-            <><b className="text-gold-400">Action Required:</b> Connect your Tradejini account to activate your subscription and start receiving trades.</>
-          ) : (
-            <><b className="text-slate-200">Account not connected.</b> Connect your Tradejini account to start receiving trades.</>
-          )}
+          Trade <b className="text-slate-200">Indian F&amp;O</b> (NIFTY / BankNIFTY)?
         </p>
-        <Link href="/connect/tradejini" className={`text-sm ${waitingForConnection ? "btn-gold" : "btn-ghost"}`}>
+        <Link href="/connect/tradejini" className="btn-ghost text-sm">
           Connect Tradejini →
         </Link>
       </div>
@@ -468,10 +392,8 @@ function TradejiniPanel({ tj, waitingForConnection, onReload }: { tj: TjState; w
               {tj.connected ? "Tradejini connected — Indian F&O live" : "Tradejini auto-renewing…"}
             </p>
             <p className="text-sm text-muted">
-              Margin ₹{(tj.equity_inr ?? 0).toLocaleString("en-IN")} ·{" "}
-              {tj.positions?.length ?? 0} positions
               {tj.expires_at
-                ? ` · session ends ${new Date(tj.expires_at).toLocaleTimeString([], {
+                ? `Session ends ${new Date(tj.expires_at).toLocaleTimeString([], {
                     hour: "2-digit",
                     minute: "2-digit",
                   })}`
