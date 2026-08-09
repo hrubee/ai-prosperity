@@ -1,0 +1,50 @@
+# AI Prosperity — Caddy hosting config (VPS)
+# Caddy auto-provisions and renews HTTPS certificates for these domains.
+#
+# Deploy:
+#   1. Point DNS A records for aiprosperity.in, www, and app -> this VPS IP.
+#   2. Build + run the Next.js app:  cd frontend && npm ci && npm run build && npm run start  (listens on :3000)
+#      (run it under a process manager — systemd unit or pm2 — see frontend/README.md)
+#   3. Place this file at /etc/caddy/Caddyfile (or import it) and: systemctl reload caddy
+#
+# The marketing site and the app are the same Next.js project for now; split later if needed.
+
+app.diffraction.in {
+	encode zstd gzip
+	# Frontend (Next.js) on :3100. We don't route /api to it.
+	reverse_proxy 127.0.0.1:3100
+
+	# Backend API (FastAPI) under /api/* -> uvicorn on :8000.
+	handle_path /api/* {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	# Tradejini Copier backend API & WebSockets -> uvicorn on :8001
+	handle /copier/api/* {
+		uri strip_prefix /copier
+		reverse_proxy 127.0.0.1:8001
+	}
+	handle /copier/ws/* {
+		uri strip_prefix /copier
+		reverse_proxy 127.0.0.1:8001
+	}
+
+	# Security headers.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/app.diffraction.in.log
+	}
+}
+
+# Marketing root -> redirect to the app for now (or serve a static landing later).
+diffraction.in, www.diffraction.in {
+	encode zstd gzip
+	redir https://app.diffraction.in{uri}
+}

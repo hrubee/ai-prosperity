@@ -1,0 +1,23 @@
+[Unit]
+Description=Tradejini Copier & Log Monitor (FastAPI/WebSockets)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/aiprosperity/backend
+# Ensure the virtual environment is used
+Environment="PATH=/root/aiprosperity/backend/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+EnvironmentFile=/root/aiprosperity/backend/.env
+# Run the FastAPI server via uvicorn on port 8000
+ExecStart=/root/aiprosperity/backend/.venv/bin/uvicorn app.copier_monitor:app --host 127.0.0.1 --port 8001
+Restart=always
+RestartSec=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

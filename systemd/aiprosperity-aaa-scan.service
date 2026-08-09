@@ -1,0 +1,16 @@
+[Unit]
+Description=AI Prosperity AAA candlestick-setup scanner (NSE 1D, daily pre-open)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/aiprosperity/backend
+EnvironmentFile=/root/aiprosperity/backend/.env
+ExecStart=/root/aiprosperity/backend/.venv/bin/python -m app.aaa_scanner
+# ~3700 NSE equities at the throttled ~3 req/s Kite cap ⇒ ~35–45 min. Starting at
+# 07:00 IST still finishes comfortably before the 09:15 open. 60-min hard cap.
+TimeoutStartSec=3600
+
+[Install]
+WantedBy=multi-user.target

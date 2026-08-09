@@ -1,0 +1,19 @@
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env*.local
+frontend/next-env.d.ts
+
+# Python (backend / executor — Phase 2)
+backend/.venv/
+executor/.venv/
+**/__pycache__/
+
+# Secrets
+.env
+*.pem
+*.key
+
+# OS
+.DS_Store

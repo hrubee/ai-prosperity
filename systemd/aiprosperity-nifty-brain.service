@@ -1,0 +1,14 @@
+[Unit]
+Description=AI Prosperity NIFTY F&O Brain (publishes venue=tradejini signals)
+After=network.target postgresql.service aiprosperity-backend.service
+
+[Service]
+Type=simple
+WorkingDirectory=/root/aiprosperity/backend
+EnvironmentFile=/root/aiprosperity/backend/.env
+ExecStart=/root/aiprosperity/backend/.venv/bin/python -m app.nifty_brain
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

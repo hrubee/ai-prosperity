@@ -1,0 +1,14 @@
+[Unit]
+Description=Fire the AAA candlestick-setup scan every weekday before market open
+
+[Timer]
+# 01:30 UTC = 07:00 IST, Mon–Fri. The ~3700-stock sweep takes ~35–45 min, so a
+# 07:00 start finishes comfortably before the 09:15 NSE open — the /aaa list is
+# fresh for the day when the market bell rings. (Weekends skipped — no new daily
+# candle forms. 07:00 is after Kite's ~06:00 token rollover, so auto-login works.)
+# Persistent: if the box was down at the scheduled time, run as soon as it's back.
+OnCalendar=Mon..Fri *-*-* 01:30:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

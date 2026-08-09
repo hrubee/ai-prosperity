@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tradejini Copier & Log Monitor</title>
+    <style>
+        :root {
+            --bg-dark: #0f172a;
+            --bg-card: #1e293b;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent-blue: #3b82f6;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --accent-yellow: #f59e0b;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: 'Inter', -apple-system, sans-serif;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        header {
+            padding: 1rem 2rem;
+            background-color: var(--bg-card);
+            border-bottom: 1px solid #334155;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .status-badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 999px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            background-color: rgba(245, 158, 11, 0.2);
+            color: var(--accent-yellow);
+        }
+
+        .status-badge.connected {
+            background-color: rgba(16, 185, 129, 0.2);
+            color: var(--accent-green);
+        }
+        
+        .status-badge.disconnected {
+            background-color: rgba(239, 68, 68, 0.2);
+            color: var(--accent-red);
+        }
+
+        main {
+            flex: 1;
+            padding: 2rem;
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 2rem;
+            overflow: hidden;
+        }
+
+        .panel {
+            background-color: var(--bg-card);
+            border-radius: 0.5rem;
+            border: 1px solid #334155;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .panel-header {
+            padding: 1rem;
+            border-bottom: 1px solid #334155;
+            font-weight: 600;
+            background-color: rgba(0, 0, 0, 0.2);
+        }
+
+        .log-container {
+            flex: 1;
+            padding: 1rem;
+            overflow-y: auto;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.875rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .log-entry {
+            padding: 0.75rem;
+            border-radius: 0.25rem;
+            background-color: rgba(15, 23, 42, 0.5);
+            border-left: 4px solid var(--text-muted);
+            animation: slideIn 0.3s ease-out;
+        }
+
+        .log-entry.signal_received { border-left-color: var(--accent-blue); }
+        .log-entry.trade_placed { border-left-color: var(--accent-green); }
+        .log-entry.order_update { border-left-color: var(--accent-yellow); }
+        .log-entry.error { border-left-color: var(--accent-red); }
+
+        .log-time {
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .log-content {
+            word-break: break-all;
+            white-space: pre-wrap;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.1rem 0.4rem;
+            border-radius: 0.25rem;
+            font-size: 0.7rem;
+            font-weight: bold;
+            margin-right: 0.5rem;
+            text-transform: uppercase;
+        }
+        
+        .badge.signal_received { background-color: var(--accent-blue); color: white; }
+        .badge.trade_placed { background-color: var(--accent-green); color: white; }
+        .badge.order_update { background-color: var(--accent-yellow); color: black; }
+        .badge.error { background-color: var(--accent-red); color: white; }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Tradejini Multi-Account Monitor</h1>
+        <div style="display: flex; gap: 1rem; align-items: center;">
+            <button id="toggle-copier" style="padding: 0.4rem 0.8rem; border: none; border-radius: 0.25rem; font-weight: bold; cursor: pointer; background: var(--accent-blue); color: white;">Loading...</button>
+            <div id="connection-status" class="status-badge disconnected">Disconnected</div>
+        </div>
+    </header>
+
+    <main>
+        <div class="panel">
+            <div class="panel-header">Real-Time Event Stream</div>
+            <div id="logs" class="log-container">
+                <!-- Logs will appear here -->
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const logsContainer = document.getElementById('logs');
+        const statusBadge = document.getElementById('connection-status');
+        
+        // Connect to FastAPI WebSocket
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/copier/ws/logs`;
+        let ws;
+
+        function connect() {
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                statusBadge.textContent = 'Live';
+                statusBadge.className = 'status-badge connected';
+                addLog('system', { message: 'Connected to monitoring server.' });
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    addLog(data.type, data);
+                } catch (e) {
+                    addLog('system', { message: event.data });
+                }
+            };
+
+            ws.onclose = () => {
+                statusBadge.textContent = 'Disconnected';
+                statusBadge.className = 'status-badge disconnected';
+                setTimeout(connect, 3000); // Auto reconnect
+            };
+        }
+
+        function addLog(type, data) {
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            
+            const time = new Date().toLocaleTimeString();
+            
+            // Format content based on type
+            let content = '';
+            let title = type;
+            
+            if (type === 'signal_received') {
+                content = `Incoming Payload: ${JSON.stringify(data.data)}`;
+            } else if (type === 'trade_placed') {
+                content = `Account [${data.account}]: ${JSON.stringify(data.response)}`;
+            } else if (type === 'order_update') {
+                content = `Account [${data.account}]: ${JSON.stringify(data.data)}`;
+            } else if (type === 'error') {
+                content = data.message || JSON.stringify(data);
+            } else {
+                content = JSON.stringify(data);
+            }
+
+            entry.innerHTML = `
+                <div class="log-time">${time}</div>
+                <div><span class="badge ${type}">${title.replace('_', ' ')}</span> <span class="log-content">${content}</span></div>
+            `;
+            
+            logsContainer.insertBefore(entry, logsContainer.firstChild);
+            
+            // Keep only latest 100 logs
+            if (logsContainer.children.length > 100) {
+                logsContainer.removeChild(logsContainer.lastChild);
+            }
+        }
+
+        const toggleBtn = document.getElementById('toggle-copier');
+        
+        async function fetchCopierStatus() {
+            try {
+                const res = await fetch('/copier/api/copier-status');
+                const data = await res.json();
+                updateToggleButton(data.enabled);
+            } catch(e) { console.error("Could not fetch copier status", e); }
+        }
+        
+        function updateToggleButton(enabled) {
+            if (enabled) {
+                toggleBtn.textContent = 'Pause Copier';
+                toggleBtn.style.backgroundColor = 'var(--accent-red)';
+            } else {
+                toggleBtn.textContent = 'Resume Copier';
+                toggleBtn.style.backgroundColor = 'var(--accent-green)';
+            }
+        }
+
+        toggleBtn.addEventListener('click', async () => {
+            try {
+                const res = await fetch('/copier/api/copier-toggle', {method: 'POST'});
+                const data = await res.json();
+                updateToggleButton(data.enabled);
+            } catch(e) { console.error("Could not toggle copier", e); }
+        });
+
+        // Initialize connection
+        connect();
+        fetchCopierStatus();
+    </script>
+</body>
+</html>

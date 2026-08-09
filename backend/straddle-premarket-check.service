@@ -1,0 +1,10 @@
+[Unit]
+Description=One-time first-live-run check after straddle cutover to the new box
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/aiprosperity/backend
+EnvironmentFile=/root/aiprosperity/backend/.env
+ExecStart=/root/aiprosperity/backend/.venv/bin/python /root/aiprosperity/backend/straddle_premarket_check.py
+TimeoutStartSec=120
