@@ -7,8 +7,7 @@ import { api, clearToken, isAuthed, type Me, type OrderRow, type Position } from
 
 export default function Dashboard() {
   const [me, setMe] = useState<Me | null>(null);
-  const [equity, setEquity] = useState(0);
-  const [positions, setPositions] = useState<Position[]>([]);
+
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [pausing, setPausing] = useState(false);
@@ -31,12 +30,8 @@ export default function Dashboard() {
       if (m.subscription?.package) {
         setSelectedPlanId((prev) => prev || m.subscription?.package || null);
       }
-      if (m.connection?.status === "connected") {
-        const [p, o] = await Promise.all([api.myPositions(), api.myOrders()]);
-        setEquity(p.equity);
-        setPositions(p.positions || []);
-        setOrders(o || []);
-      }
+      const o = await api.myOrders();
+      setOrders(o || []);
     } catch {
       // unauthorized / backend down — fall through to the connect prompt
     }
@@ -343,9 +338,9 @@ export default function Dashboard() {
             {/* Stat cards */}
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
               {[
-                ["Equity", `$${equity.toFixed(2)}`],
-                ["Risk / trade", "2%"],
-                ["Open positions", String(positions.length)],
+                ["Margin", `₹${(tj?.equity_inr ?? 0).toLocaleString("en-IN")}`],
+                ["Broker Status", tj?.connected ? "Live" : "Disconnected"],
+                ["Open positions", String(tj?.positions?.length ?? 0)],
                 ["Subscription", me?.subscription?.status ?? "none"],
               ].map(([k, v]) => (
                 <div key={k} className="card p-5">
@@ -360,28 +355,34 @@ export default function Dashboard() {
                 {/* Positions */}
                 <div className="card p-5 lg:col-span-2">
                   <h2 className="mb-4 font-semibold text-white">Open positions</h2>
-                  {positions.length === 0 ? (
-                    <p className="py-6 text-center text-sm text-muted">No open positions.</p>
+                  {(!tj?.positions || tj.positions.length === 0) ? (
+                    <div className="py-8 flex flex-col items-center justify-center text-center">
+                      <div className="w-12 h-12 rounded-full bg-ink-800/50 flex items-center justify-center mb-3">
+                        <span className="text-xl">📊</span>
+                      </div>
+                      <p className="text-sm font-medium text-slate-300">No active positions</p>
+                      <p className="text-xs text-muted mt-1 max-w-xs">Waiting for the AI to identify the next high-probability setup.</p>
+                    </div>
                   ) : (
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
-                        <thead className="text-left text-xs uppercase tracking-wider text-muted">
+                        <thead className="text-left text-xs uppercase tracking-wider text-muted bg-ink-900/50">
                           <tr>
-                            <th className="pb-2">Symbol</th>
-                            <th className="pb-2">Side</th>
-                            <th className="pb-2">Size</th>
-                            <th className="pb-2">Entry</th>
+                            <th className="pb-3 pt-3 pl-4 rounded-tl-lg">Symbol</th>
+                            <th className="pb-3 pt-3">Side</th>
+                            <th className="pb-3 pt-3 rounded-tr-lg">Size</th>
                           </tr>
                         </thead>
                         <tbody className="text-slate-300">
-                          {positions.map((p) => (
-                            <tr key={p.symbol} className="border-t border-ink-800">
-                              <td className="py-2.5 font-medium text-white">{p.base}</td>
-                              <td className={p.side === "long" ? "text-gain" : "text-loss"}>
-                                {p.side.toUpperCase()}
+                          {tj.positions.map((p: any) => (
+                            <tr key={p.sym_id || p.symbol} className="border-t border-ink-800/60 hover:bg-ink-800/20 transition-colors">
+                              <td className="py-3 pl-4 font-medium text-white">{p.symbol}</td>
+                              <td className="py-3">
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${p.side.toLowerCase() === "buy" ? "bg-gain/10 text-gain border border-gain/20" : "bg-loss/10 text-loss border border-loss/20"}`}>
+                                  {p.side.toUpperCase()}
+                                </span>
                               </td>
-                              <td>{p.coin_size}</td>
-                              <td className="font-mono">{p.entry.toLocaleString()}</td>
+                              <td className="py-3 font-mono">{p.size}</td>
                             </tr>
                           ))}
                         </tbody>
