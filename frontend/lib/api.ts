@@ -162,7 +162,7 @@ export const api = {
   dhanConnect: (apiKey: string, apiSecret: string, totpSeed: string) =>
     req<{ connected: boolean }>("/admin/dhan/connect", {
       method: "POST",
-      body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret, totp_seed: totpSeed }),
+      body: JSON.stringify({ client_id: apiKey, access_token: apiSecret }),
     }),
   myDhan: () =>
     req<{
@@ -183,7 +183,7 @@ export const api = {
     }),
   adminClients: () =>
     req<
-      Array<{ id: string; email: string; package: string | null; subscription: string | null; connection: string | null; paused: boolean | null; sandbox: boolean | null }>
+      Array<{ id: string; email: string; package: string | null; subscription: string | null; payment_status: string; connection: string | null; tradejini: string | null; paused: boolean | null; sandbox: boolean | null }>
     >("/admin/clients"),
   adminClientDetail: (id: string) =>
     req<{
