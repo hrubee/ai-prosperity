@@ -226,7 +226,7 @@ async def receive_webhook(request: Request):
             return {"status": "ignored"}
             
         dhan_product = payload.get("productType", "").upper()
-        tj_product = "mis" if dhan_product == "INTRADAY" else "normal"
+        tj_product = "intraday" if dhan_product == "INTRADAY" else "normal"
 
         action = payload.get("transactionType", "").upper() # "BUY" or "SELL"
         if action == "B":
