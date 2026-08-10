@@ -82,7 +82,7 @@ export default function Vol2b2tDashboard() {
                 <thead className="bg-black/20 text-slate-400">
                   <tr>
                     <th className="p-4 font-medium">Coin</th>
-                    <th className="p-4 font-medium text-right">1000 Candle Average</th>
+                    <th className="p-4 font-medium text-right">40 Candle Average</th>
                     <th className="p-4 font-medium text-right">Current Volume</th>
                     <th className="p-4 font-medium text-right">Volume Threshold</th>
                   </tr>
