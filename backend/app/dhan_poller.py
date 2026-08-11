@@ -15,28 +15,36 @@ WEBHOOK_URL = "http://127.0.0.1:8000/api/webhook"
 SEEN_ORDERS_FILE = "dhan_poller_seen.json"
 
 def get_dhan_headers():
-    with SessionLocal() as db:
-        conn = db.query(DhanConnection).filter(
-            DhanConnection.status == "connected",
-            DhanConnection.access_token_encrypted.isnot(None),
-            DhanConnection.access_token_encrypted != ""
-        ).order_by(DhanConnection.id.desc()).first()
-        if not conn or not conn.access_token_encrypted:
-            return None
-        
-        try:
-            token = decrypt_secret(conn.access_token_encrypted)
-            client_id = conn.client_id
-            headers = {
-                "access-token": token,
-                "Content-Type": "application/json",
-                "Accept": "application/json"
-            }
-            if client_id:
-                headers["client-id"] = client_id
-            return headers
-        except:
-            return None
+    token = None
+    client_id = None
+    try:
+        with SessionLocal() as db:
+            conn = db.query(DhanConnection).filter(
+                DhanConnection.status == "connected",
+                DhanConnection.access_token_encrypted.isnot(None),
+                DhanConnection.access_token_encrypted != ""
+            ).order_by(DhanConnection.id.desc()).first()
+            if conn and conn.access_token_encrypted:
+                token = decrypt_secret(conn.access_token_encrypted)
+                client_id = conn.client_id
+    except Exception:
+        pass
+
+    if not token:
+        token = os.environ.get("DHAN_ACCESS_TOKEN", "").strip()
+        client_id = os.environ.get("DHAN_CLIENT_ID", "").strip()
+
+    if not token:
+        return None
+
+    headers = {
+        "access-token": token,
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    if client_id:
+        headers["client-id"] = client_id
+    return headers
 
 def load_seen_orders():
     if os.path.exists(SEEN_ORDERS_FILE):

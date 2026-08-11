@@ -458,24 +458,75 @@ def tradejini_disconnect(user: User = Depends(auth.current_user), db: Session = 
 
 
 @app.post("/admin/dhan/connect")
+@app.post("/admin/dhan/update-token")
 def dhan_connect(body: DhanConnectRequest, _: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
     client_id = body.client_id.strip() if body.client_id else ""
     access_token = body.access_token.strip()
     
     if not access_token:
         raise HTTPException(status_code=400, detail="Access Token is required")
-    
-    # We use client_id in the api_key column to keep schema backwards compatible for now
-    conn = db.query(DhanConnection).filter(DhanConnection.api_key == client_id).one_or_none()
+        
+    # Test token against Dhan API
+    try:
+        import httpx
+        headers = {
+            "access-token": access_token,
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        if client_id:
+            headers["client-id"] = client_id
+        r = httpx.get("https://api.dhan.co/v2/orders", headers=headers, timeout=5.0)
+        if r.status_code == 401:
+            raise HTTPException(status_code=400, detail="Invalid or expired Dhan Access Token (HTTP 401 Unauthorized)")
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.warning("Dhan token validation check error: %s", e)
+
+    conn = db.query(DhanConnection).filter(DhanConnection.status == "connected").first()
+    if conn is None:
+        conn = db.query(DhanConnection).first()
     if conn is None:
         conn = DhanConnection(api_key=client_id, client_id=client_id, access_token_encrypted="")
         db.add(conn)
         
+    if client_id:
+        conn.client_id = client_id
+        conn.api_key = client_id
     conn.access_token_encrypted = encrypt_secret(access_token)
     conn.status = "connected"
     conn.paused = False
     db.commit()
-    return {"connected": True}
+
+    # Synchronize .env file on disk
+    try:
+        env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env"))
+        if os.path.exists(env_path):
+            with open(env_path, "r") as f:
+                lines = f.readlines()
+            new_lines = []
+            has_tok = False
+            has_cid = False
+            for l in lines:
+                if l.startswith("DHAN_ACCESS_TOKEN="):
+                    new_lines.append(f'DHAN_ACCESS_TOKEN="{access_token}"\n')
+                    has_tok = True
+                elif client_id and l.startswith("DHAN_CLIENT_ID="):
+                    new_lines.append(f'DHAN_CLIENT_ID="{client_id}"\n')
+                    has_cid = True
+                else:
+                    new_lines.append(l)
+            if not has_tok:
+                new_lines.append(f'DHAN_ACCESS_TOKEN="{access_token}"\n')
+            if client_id and not has_cid:
+                new_lines.append(f'DHAN_CLIENT_ID="{client_id}"\n')
+            with open(env_path, "w") as f:
+                f.writelines(new_lines)
+    except Exception as e:
+        log.warning("Could not sync .env file: %s", e)
+
+    return {"connected": True, "ok": True}
 
 
 @app.get("/admin/dhan")
@@ -693,15 +744,35 @@ def admin_stats(_: User = Depends(auth.require_admin), db: Session = Depends(get
 @app.get("/admin/dhan/token-status")
 def dhan_token_status(_: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
     conn = db.query(DhanConnection).filter(DhanConnection.status == "connected").first()
-    if not conn:
+    if not conn or not conn.access_token_encrypted:
         return {"is_valid": False}
     try:
         from .crypto import decrypt_secret
         token = decrypt_secret(conn.access_token_encrypted)
     except:
         token = None
+        
+    if not token:
+        return {"is_valid": False}
+        
+    is_valid = True
+    try:
+        import httpx
+        headers = {
+            "access-token": token,
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        if conn.client_id:
+            headers["client-id"] = conn.client_id
+        r = httpx.get("https://api.dhan.co/v2/orders", headers=headers, timeout=4.0)
+        if r.status_code == 401:
+            is_valid = False
+    except Exception:
+        pass
+
     return {
-        "is_valid": True,
+        "is_valid": is_valid,
         "client_id": conn.client_id,
         "access_token": token
     }
