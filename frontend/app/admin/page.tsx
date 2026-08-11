@@ -11,7 +11,9 @@ type Client = {
   email: string;
   package: string | null;
   subscription: string | null;
+  payment_status: string;
   connection: string | null;
+  tradejini: string | null;
   paused: boolean | null;
 };
 type Stats = {
@@ -120,11 +122,13 @@ export default function Admin() {
                       <td className="py-3 font-medium text-white">{c.email}</td>
                       <td className="capitalize">{c.package ?? "—"}</td>
                       <td>
-                        <Badge ok={c.subscription === "active"}>{c.subscription ?? "none"}</Badge>
+                        <Badge ok={c.payment_status === "approved" || c.subscription === "active"}>
+                          {c.payment_status === "approved" ? "subscribed" : (c.subscription ?? "none")}
+                        </Badge>
                       </td>
                       <td>
-                        <Badge ok={c.connection === "connected" && !c.paused}>
-                          {c.paused ? "paused" : c.connection ?? "none"}
+                        <Badge ok={c.tradejini === "connected" && !c.paused}>
+                          {c.paused ? "paused" : (c.tradejini === "connected" ? "Connected" : "None")}
                         </Badge>
                       </td>
                       <td className="text-right">

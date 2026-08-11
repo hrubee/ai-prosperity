@@ -27,12 +27,14 @@ def get_dhan_headers():
         try:
             token = decrypt_secret(conn.access_token_encrypted)
             client_id = conn.client_id
-            return {
+            headers = {
                 "access-token": token,
-                "client-id": client_id,
                 "Content-Type": "application/json",
                 "Accept": "application/json"
             }
+            if client_id:
+                headers["client-id"] = client_id
+            return headers
         except:
             return None
 
@@ -98,9 +100,12 @@ async def run_poller_async():
                                     new_executions.append((state_key, order))
                     
                     if first_boot:
+                        for state_key, _ in new_executions:
+                            seen_orders.add(state_key)
                         save_seen_orders(seen_orders)
-                        log_msg(f"First boot: Pre-filled {len(seen_orders)} terminal orders.")
+                        log_msg(f"First boot: Pre-filled {len(seen_orders)} existing terminal orders.")
                         first_boot = False
+                        new_executions.clear()
                     
                     if time.time() - last_heartbeat > 60:
                         try:

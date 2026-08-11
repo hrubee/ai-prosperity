@@ -17,7 +17,7 @@ PKG_VERSION = '1.0.2'
 def commafmt(value, precision=2):
     v = str(round(float(value), 2))
     parts = v.split(".")
-    parts[0] = re.sub("\B(?=(\d{3})+(?!\d))", ",", parts[0])
+    parts[0] = re.sub(r"\B(?=(\d{3})+(?!\d))", ",", parts[0])
     return ".".join(parts)
 
 

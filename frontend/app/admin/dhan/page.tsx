@@ -88,12 +88,11 @@ export default function DhanConnectPage() {
 
               <div>
                 <label className="label" htmlFor="dhan-client-id">
-                  Client ID
+                  Client ID (Optional)
                 </label>
                 <input
                   id="dhan-client-id"
                   className="input font-mono"
-                  required
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
                   placeholder="e.g. 1000000000"

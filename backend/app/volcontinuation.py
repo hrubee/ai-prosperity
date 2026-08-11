@@ -27,13 +27,13 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
 
-router = APIRouter(tags=["vol2b2t"])
+router = APIRouter(tags=["volcontinuation"])
 
-TRADES_FILE = os.environ.get("VB2_TRADES_FILE", "/root/vol2b2t_coindcx/trades.csv")
+TRADES_FILE = os.environ.get("VC_TRADES_FILE", "/root/volcontinuation_coindcx/trades.csv")
 
 # For local mac testing fallback
 if not os.path.exists(TRADES_FILE):
-    local_fallback = os.path.join(_GO_TRADER_ROOT, "vol2b2t_coindcx", "trades.csv")
+    local_fallback = os.path.join(_GO_TRADER_ROOT, "volcontinuation_coindcx", "trades.csv")
     if os.path.exists(local_fallback):
         TRADES_FILE = local_fallback
 
@@ -52,9 +52,9 @@ class TradeInfo(BaseModel):
     extra_exit: Optional[str] = None
 
 
-SCREENER_FILE = os.environ.get("VB2_SCREENER_FILE", "/root/vol2b2t_coindcx/screener.json")
+SCREENER_FILE = os.environ.get("VC_SCREENER_FILE", "/root/volcontinuation_coindcx/screener.json")
 if not os.path.exists(SCREENER_FILE):
-    local_screener_fallback = os.path.join(_GO_TRADER_ROOT, "vol2b2t_coindcx", "screener.json")
+    local_screener_fallback = os.path.join(_GO_TRADER_ROOT, "volcontinuation_coindcx", "screener.json")
     if os.path.exists(local_screener_fallback):
         SCREENER_FILE = local_screener_fallback
 
@@ -164,7 +164,7 @@ def get_trades():
     return results
 
 @router.get("/chart/{coin}")
-def render_vol2b2t_chart(coin: str, entry_ts: str):
+def render_volcontinuation_chart(coin: str, entry_ts: str):
     """Generates a visual chart for the given coin around the entry time."""
     if not CoinDCXExchangeAdapter:
         raise HTTPException(status_code=500, detail="CoinDCX Adapter not found")
@@ -277,7 +277,7 @@ def render_vol2b2t_chart(coin: str, entry_ts: str):
         ax1.set_xlim(start_x, end_x)
         ax2.set_xlim(start_x, end_x)
         
-    ax1.set_title(f"Vol2b2t: {coin}", color="white", fontsize=14, fontweight="bold")
+    ax1.set_title(f"VolContinuation: {coin}", color="white", fontsize=14, fontweight="bold")
     fig.tight_layout()
     
     buf = BytesIO()

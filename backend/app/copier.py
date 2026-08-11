@@ -95,43 +95,49 @@ async def toggle_copier():
     await manager.broadcast(json.dumps({"type": "status", "message": msg}))
     return {"enabled": new_state}
 
+import threading
+
 ORDER_MAPPING_FILE = "copier_order_mappings.json"
+_mapping_lock = threading.Lock()
 
 def get_order_mapping(dhan_order_id: str) -> dict:
     try:
-        if os.path.exists(ORDER_MAPPING_FILE):
-            with open(ORDER_MAPPING_FILE, "r") as f:
-                mappings = json.load(f)
-                return mappings.get(str(dhan_order_id), {})
+        with _mapping_lock:
+            if os.path.exists(ORDER_MAPPING_FILE):
+                with open(ORDER_MAPPING_FILE, "r") as f:
+                    mappings = json.load(f)
+                    return mappings.get(str(dhan_order_id), {})
     except Exception:
         pass
     return {}
 
 def save_order_mapping(dhan_order_id: str, client_api_key: str, tj_order_id: str):
     try:
-        mappings = {}
-        if os.path.exists(ORDER_MAPPING_FILE):
-            with open(ORDER_MAPPING_FILE, "r") as f:
-                mappings = json.load(f)
-        d_id = str(dhan_order_id)
-        if d_id not in mappings:
-            mappings[d_id] = {}
-        mappings[d_id][client_api_key] = tj_order_id
-        with open(ORDER_MAPPING_FILE, "w") as f:
-            json.dump(mappings, f)
+        with _mapping_lock:
+            mappings = {}
+            if os.path.exists(ORDER_MAPPING_FILE):
+                with open(ORDER_MAPPING_FILE, "r") as f:
+                    mappings = json.load(f)
+            d_id = str(dhan_order_id)
+            if d_id not in mappings:
+                mappings[d_id] = {}
+            mappings[d_id][client_api_key] = tj_order_id
+            with open(ORDER_MAPPING_FILE, "w") as f:
+                json.dump(mappings, f)
     except Exception as e:
         save_log(f"Error saving order mapping: {e}")
 
 def remove_order_mapping(dhan_order_id: str):
     try:
-        if os.path.exists(ORDER_MAPPING_FILE):
-            with open(ORDER_MAPPING_FILE, "r") as f:
-                mappings = json.load(f)
-            d_id = str(dhan_order_id)
-            if d_id in mappings:
-                del mappings[d_id]
-                with open(ORDER_MAPPING_FILE, "w") as f:
-                    json.dump(mappings, f)
+        with _mapping_lock:
+            if os.path.exists(ORDER_MAPPING_FILE):
+                with open(ORDER_MAPPING_FILE, "r") as f:
+                    mappings = json.load(f)
+                d_id = str(dhan_order_id)
+                if d_id in mappings:
+                    del mappings[d_id]
+                    with open(ORDER_MAPPING_FILE, "w") as f:
+                        json.dump(mappings, f)
     except Exception:
         pass
 
@@ -141,6 +147,9 @@ async def receive_webhook(request: Request):
 
     if payload.get("type") == "status":
         return {"status": "accepted", "reason": "heartbeat"}
+        
+    if payload.get("is_historic"):
+        return {"status": "ignored", "reason": "historic order from pre-boot state"}
     
     if not is_copier_enabled():
         await manager.broadcast(json.dumps({

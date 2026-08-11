@@ -13,13 +13,14 @@ import jwt
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, RedirectResponse
+from typing import Optional
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .dhan_poller import run_poller_async
 import asyncio
-from . import auth, dodo, orderbook, screener, signal_bus, tradejini, tradejini_auth, vol2b2t, copier
+from . import auth, dodo, orderbook, screener, signal_bus, tradejini, tradejini_auth, vol2b2t, volcontinuation, copier
 from .config import settings
 from .crypto import decrypt_secret, encrypt_secret
 from .db import get_db
@@ -31,6 +32,7 @@ log = logging.getLogger("api")
 app = FastAPI(title="AI Prosperity API", version="0.1.0")
 
 app.include_router(vol2b2t.router, prefix="/vol2b2t")
+app.include_router(volcontinuation.router, prefix="/volcontinuation")
 app.include_router(copier.router)
 
 @app.on_event("startup")
@@ -177,7 +179,7 @@ class TradejiniConnectRequest(BaseModel):
     totp_seed: str
 
 class DhanConnectRequest(BaseModel):
-    client_id: str
+    client_id: Optional[str] = None
     access_token: str  # base32 TOTP secret — stored encrypted for daily AUTO-login
 
 
@@ -457,11 +459,11 @@ def tradejini_disconnect(user: User = Depends(auth.current_user), db: Session = 
 
 @app.post("/admin/dhan/connect")
 def dhan_connect(body: DhanConnectRequest, _: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
-    client_id = body.client_id.strip()
+    client_id = body.client_id.strip() if body.client_id else ""
     access_token = body.access_token.strip()
     
-    if not client_id or not access_token:
-        raise HTTPException(status_code=400, detail="Client ID and Access Token are required")
+    if not access_token:
+        raise HTTPException(status_code=400, detail="Access Token is required")
     
     # We use client_id in the api_key column to keep schema backwards compatible for now
     conn = db.query(DhanConnection).filter(DhanConnection.api_key == client_id).one_or_none()
@@ -719,6 +721,7 @@ def admin_clients(_: User = Depends(auth.require_admin), db: Session = Depends(g
             "email": u.email,
             "package": s.package if s else None,
             "subscription": s.status if s else None,
+            "payment_status": u.payment_status,
             "connection": c.status if c else None,
             "paused": c.paused if c else None,
             "sandbox": c.sandbox if c else None,
