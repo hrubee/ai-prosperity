@@ -11,17 +11,34 @@ export default function ConnectPage() {
           <Logo />
         </div>
 
+        {/* CoinDCX (Crypto Futures & Spot) */}
+        <div className="mb-6 rounded-xl border border-blue-500/40 bg-ink-800/40 p-5 text-center">
+          <div className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-xl bg-blue-500/10 text-xl font-bold text-blue-400">
+            ⚡
+          </div>
+          <p className="text-base font-semibold text-white">
+            CoinDCX (Crypto Futures &amp; Spot)
+          </p>
+          <p className="mt-1 text-xs text-muted leading-relaxed">
+            Automate Crypto Futures trading 24/7 on CoinDCX. Connect your account using your read/trade API Key &amp; Secret. Credentials are encrypted at rest.
+          </p>
+          <Link href="/connect/coindcx" className="btn-gold mt-4 block w-full">
+            Connect CoinDCX Account →
+          </Link>
+        </div>
+
         {/* Indian F&O via Tradejini — bring-your-own API key flow */}
-        <div className="mb-6 rounded-xl border border-gold-500/30 bg-ink-800/40 p-4 text-center">
-          <p className="text-sm text-slate-300">
-            Trading <b className="text-slate-100">Indian F&amp;O</b> (NIFTY / BankNIFTY)?
+        <div className="mb-6 rounded-xl border border-gold-500/30 bg-ink-800/40 p-5 text-center">
+          <div className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-xl bg-gold-500/10 text-xl font-bold text-gold-400">
+            📈
+          </div>
+          <p className="text-base font-semibold text-white">
+            Indian F&amp;O (Tradejini)
           </p>
-          <p className="mt-1 text-xs text-muted">
-            Connect your Tradejini account with your own API key — re-authorize daily with password
-            + 2FA. Your credentials are sent only to Tradejini to mint a daily token and never
-            stored.
+          <p className="mt-1 text-xs text-muted leading-relaxed">
+            Connect your Tradejini account with your API key. Auto-renews daily via password + 2FA TOTP seed — you never have to re-login.
           </p>
-          <Link href="/connect/tradejini" className="btn-gold mt-3 w-full">
+          <Link href="/connect/tradejini" className="btn-ghost mt-4 block w-full">
             Connect Tradejini →
           </Link>
         </div>

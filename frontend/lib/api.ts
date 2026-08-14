@@ -50,6 +50,7 @@ export interface Me {
   email: string;
   name?: string | null;
   phone?: string | null;
+  client_id?: string | null;
   role: string;
   subscription: { package: string; status: string } | null;
   connection: { status: string; paused: boolean } | null;
@@ -75,10 +76,10 @@ export interface OrderRow {
 // ── calls ──────────────────────────────────────────────────
 export const api = {
   // Sign up a NEW user (409 if email/phone already exists).
-  register: (name: string, email: string, phone: string, password: string) =>
-    req<{ token: string; email: string; role: string; name: string | null }>("/auth/register", {
+  register: (name: string, email: string, phone: string, password: string, client_id?: string) =>
+    req<{ token: string; email: string; role: string; name: string | null; client_id?: string | null }>("/auth/register", {
       method: "POST",
-      body: JSON.stringify({ name, email, phone, password }),
+      body: JSON.stringify({ name, email, phone, password, client_id }),
     }),
   // Returning user: email OR phone + password.
   login: (identifier: string, password: string) =>
@@ -125,6 +126,7 @@ export const api = {
       name: string | null;
       email: string;
       phone: string | null;
+      client_id?: string | null;
       payment_status: string;
       screenshot?: { status: string; mime_type: string; image_b64: string; created_at: string; reviewed_at: string | null; review_note: string | null };
     }>>("/admin/approvals"),
@@ -157,6 +159,25 @@ export const api = {
   tradejiniPause: (paused: boolean) =>
     req<{ paused: boolean }>(`/tradejini/pause?paused=${paused}`, { method: "POST" }),
   tradejiniDisconnect: () => req<{ status: string }>("/tradejini/disconnect", { method: "POST" }),
+
+  // CoinDCX (Crypto Futures & Spot) API connections
+  coindcxConnect: (apiKey: string, apiSecret: string) =>
+    req<{ status: string; message: string; balance_usdt: number }>("/coindcx/connect", {
+      method: "POST",
+      body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret }),
+    }),
+  coindcxStatus: () =>
+    req<{
+      connected: boolean;
+      status: string;
+      paused: boolean;
+      api_key?: string;
+      balance_usdt?: number;
+      updated_at?: string | null;
+    }>("/coindcx/status"),
+  coindcxPause: () =>
+    req<{ status: string; paused: boolean }>("/coindcx/toggle-pause", { method: "POST" }),
+  coindcxDisconnect: () => req<{ status: string }>("/coindcx/disconnect", { method: "POST" }),
   
   // Dhan API connections
   dhanConnect: (apiKey: string, apiSecret: string, totpSeed: string) =>
@@ -183,12 +204,15 @@ export const api = {
     }),
   adminClients: () =>
     req<
-      Array<{ id: string; email: string; package: string | null; subscription: string | null; payment_status: string; connection: string | null; tradejini: string | null; paused: boolean | null; sandbox: boolean | null }>
+      Array<{ id: string; email: string; name: string | null; phone: string | null; client_id: string | null; package: string | null; subscription: string | null; payment_status: string; connection: string | null; tradejini: string | null; paused: boolean | null; sandbox: boolean | null }>
     >("/admin/clients"),
   adminClientDetail: (id: string) =>
     req<{
       id: string;
       email: string;
+      name: string | null;
+      phone: string | null;
+      client_id: string | null;
       role: string;
       subscription: { package: string; status: string; current_period_end: string | null } | null;
       connection: { status: string; paused: boolean; sandbox: boolean } | null;
@@ -213,11 +237,64 @@ export const api = {
     req<{ status: string }>(`/admin/clients/${id}/disconnect`, { method: "POST" }),
   adminDeleteClient: (id: string) =>
     req<{ result: string }>(`/admin/clients/${id}`, { method: "DELETE" }),
+  adminChangeClientPassword: (id: string, new_password: string) =>
+    req<{ result: string }>(`/admin/clients/${id}/change-password`, {
+      method: "POST",
+      body: JSON.stringify({ new_password }),
+    }),
   adminUpdateSubscription: (id: string, current_period_end_iso: string | null) =>
     req<{ result: string }>(`/admin/clients/${id}/subscription`, {
       method: "POST",
       body: JSON.stringify({ current_period_end_iso }),
     }),
+  adminLedgerClients: () =>
+    req<{
+      clients: Array<{
+        user_id: string;
+        email: string;
+        name: string;
+        phone: string | null;
+        client_id: string | null;
+        status: string;
+        tradejini_connected: boolean;
+        total_trades: number;
+        wins: number;
+        booked_pnl_inr: number;
+        total_fees_inr: number;
+        is_deleted: boolean;
+      }>;
+    }>("/admin/ledger"),
+  adminClientProfits: (id: string) =>
+    req<{
+      client: {
+        user_id: string;
+        email: string;
+        name: string;
+        phone: string | null;
+        client_id: string | null;
+        status: string;
+      };
+      tradejini_connected: boolean;
+      booked_pnl_inr: number;
+      db_realized_pnl_inr: number;
+      tradejini_booked_pnl_inr: number | null;
+      total_fees_inr: number;
+      total_trades: number;
+      tradejini_positions: Array<any>;
+      entries: Array<{
+        id: string;
+        symbol: string;
+        side: string;
+        size: number;
+        entry_price: number;
+        exit_price: number | null;
+        realized_pnl_inr: number;
+        realized_pnl_usd: number;
+        fee_inr: number;
+        status: string;
+        executed_at: string | null;
+      }>;
+    }>(`/admin/ledger/${id}/profits`),
   adminStats: () =>
     req<{
       total_clients: number;

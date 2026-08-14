@@ -163,9 +163,16 @@ def get_trades():
     results.sort(key=lambda x: dateutil.parser.isoparse(x.entry_time), reverse=True)
     return results
 
+_CHART_CACHE: Dict[str, bytes] = {}
+
 @router.get("/chart/{coin}")
 def render_volcontinuation_chart(coin: str, entry_ts: str):
     """Generates a visual chart for the given coin around the entry time."""
+    cache_key = f"{coin}_{entry_ts}"
+    if cache_key in _CHART_CACHE:
+        from fastapi import Response
+        return Response(content=_CHART_CACHE[cache_key], media_type="image/png")
+
     if not CoinDCXExchangeAdapter:
         raise HTTPException(status_code=500, detail="CoinDCX Adapter not found")
         
@@ -282,6 +289,11 @@ def render_volcontinuation_chart(coin: str, entry_ts: str):
     
     buf = BytesIO()
     fig.savefig(buf, format="png", facecolor=fig.get_facecolor(), edgecolor="none")
+    png_bytes = buf.getvalue()
+
+    if len(_CHART_CACHE) > 250:
+        _CHART_CACHE.clear()
+    _CHART_CACHE[cache_key] = png_bytes
     
     from fastapi import Response
-    return Response(content=buf.getvalue(), media_type="image/png")
+    return Response(content=png_bytes, media_type="image/png")

@@ -154,7 +154,13 @@ async def startup_event():
 @app.post("/api/webhook")
 async def receive_webhook(request: Request):
     payload = await request.json()
-    
+
+    if payload.get("type") == "status":
+        return {"status": "accepted", "reason": "heartbeat"}
+
+    if payload.get("is_historic"):
+        return {"status": "ignored", "reason": "historic order from pre-boot state"}
+
     if not is_copier_enabled():
         await manager.broadcast(json.dumps({
             "type": "error", 
@@ -225,9 +231,6 @@ async def receive_webhook(request: Request):
         if not do_place and not do_cancel and not do_modify:
             return {"status": "ignored"}
             
-        dhan_product = payload.get("productType", "").upper()
-        tj_product = "intraday" if dhan_product == "INTRADAY" else "normal"
-
         action = payload.get("transactionType", "").upper() # "BUY" or "SELL"
         if action == "B":
             action = "BUY"
@@ -260,9 +263,22 @@ async def receive_webhook(request: Request):
                     trading_symbol = f"{und}{year}{month}{parts[2]}{parts[3]}"
                 elif len(parts) == 3 and parts[2] == "FUT":
                     trading_symbol = f"{und}{year}{month}FUT"
-                    
+        elif " " in trading_symbol:
+            opt_und = trading_symbol.upper().split(" ")[0]
+
+        if not opt_und and trading_symbol:
+            opt_und = trading_symbol.upper().replace("-", " ").split(" ")[0]
+
         if opt_expiry and opt_strike > 0 and opt_type in ("CE", "PE"):
             is_opt = True
+
+        # Product Type Resolution: Tradejini XTS API requires "normal" (NRML) for Options / F&O contracts!
+        # Passing "mis" or "intraday" on options causes Tradejini OM07: Invalid product type.
+        dhan_product = payload.get("productType", "").upper()
+        if is_opt or payload.get("exchangeSegment") in ("NSE_FNO", "BSE_FNO"):
+            tj_product = "normal"
+        else:
+            tj_product = "mis" if dhan_product == "INTRADAY" else "normal"
             
     else:
         # Standard Copier Webhook

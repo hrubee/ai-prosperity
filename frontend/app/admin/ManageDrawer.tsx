@@ -22,6 +22,7 @@ export function ManageDrawer({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState("");
+  const [newPass, setNewPass] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -79,7 +80,14 @@ export function ManageDrawer({
           <p className="py-10 text-center text-muted">Loading…</p>
         ) : (
           <>
-            <p className="font-medium text-white">{d.email}</p>
+            <div className="rounded-xl bg-ink-800/60 p-4 border border-ink-700 mb-4 space-y-1.5">
+              <h3 className="font-bold text-white text-lg">{d.name || "Unknown Name"}</h3>
+              <p className="text-sm text-muted">{d.email}</p>
+              <div className="flex items-center justify-between pt-2 border-t border-ink-700/60 text-xs">
+                <span className="text-muted">Phone: <b className="text-white font-mono">{d.phone ? (d.phone.length === 10 ? `+91 ${d.phone.slice(0,5)} ${d.phone.slice(5)}` : d.phone) : "—"}</b></span>
+                <span className="text-muted">Client ID: <b className="text-gold-400 font-mono font-bold text-sm">{d.client_id || "—"}</b></span>
+              </div>
+            </div>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
               <span className="pill capitalize">{d.subscription?.package ?? "no plan"}</span>
               <span className="pill capitalize">{d.subscription?.status ?? "—"}</span>
@@ -170,6 +178,33 @@ export function ManageDrawer({
                 )}
               </div>
             )}
+
+            {/* Admin Password Reset Section */}
+            <div className="mt-6 rounded-xl border border-ink-700 bg-ink-800/40 p-4 space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted">Admin Password Reset</p>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  placeholder="New password (min 8 chars)"
+                  className="input text-sm py-1.5 flex-1"
+                  value={newPass}
+                  onChange={(e) => setNewPass(e.target.value)}
+                />
+                <button
+                  className="btn-gold text-xs px-3 py-1.5 font-semibold shrink-0"
+                  disabled={!newPass || newPass.length < 8 || busy === "chpass"}
+                  onClick={() =>
+                    act("chpass", async () => {
+                      const res = await api.adminChangeClientPassword(id, newPass);
+                      setNewPass("");
+                      return res;
+                    })
+                  }
+                >
+                  {busy === "chpass" ? "Updating…" : "Update Password"}
+                </button>
+              </div>
+            </div>
 
             {/* actions */}
             <div className="mt-6 space-y-2">

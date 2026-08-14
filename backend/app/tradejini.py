@@ -242,21 +242,28 @@ class TradejiniClient:
                  data: dict | bytes | None = None,
                  headers: dict | None = None,
                  timeout: int = 20) -> Any:
-        """Unified request helper using pooled session."""
+        """Unified request helper using pooled session with automatic retry on connection timeout."""
         url = f"{self._base_url}{path}"
         h = self._headers()
         if headers:
             h.update(headers)
-        try:
-            resp = self._session.request(
-                method, url, params=params, data=data, headers=h, timeout=timeout)
-            resp.raise_for_status()
-            return resp.json()
-        except requests.HTTPError as e:
-            body = e.response.text[:160] if e.response is not None else "no response"
-            raise TradejiniError(f"{method} {path} HTTP {e.response.status_code}: {body}")
-        except requests.RequestException as e:
-            raise TradejiniError(f"{method} {path} error: {e}")
+        
+        last_exc = None
+        for attempt in range(2):  # 2 attempts (initial + 1 retry)
+            try:
+                resp = self._session.request(
+                    method, url, params=params, data=data, headers=h, timeout=timeout)
+                resp.raise_for_status()
+                return resp.json()
+            except requests.HTTPError as e:
+                body = e.response.text[:160] if e.response is not None else "no response"
+                raise TradejiniError(f"{method} {path} HTTP {e.response.status_code}: {body}")
+            except requests.RequestException as e:
+                last_exc = e
+                if attempt == 0:
+                    time.sleep(0.5)  # 500ms backoff before retry
+                    continue
+        raise TradejiniError(f"{method} {path} error: {last_exc}")
 
     def _get(self, path: str, params: dict | None = None) -> Any:
         return self._request("GET", path, params=params)

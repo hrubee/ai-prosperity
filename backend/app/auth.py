@@ -56,11 +56,12 @@ def _norm_phone(phone: str) -> str:
     return digits[-10:] if len(digits) > 10 else digits
 
 
-def register(db: Session, name: str, email: str, phone: str, password: str) -> User:
+def register(db: Session, name: str, email: str, phone: str, password: str, client_id: str | None = None) -> User:
     """Create a NEW account. 409 if the email or phone already exists (returning
     users log in instead). No "claim" of existing rows."""
     email = (email or "").lower().strip()
     name = (name or "").strip()
+    client_id_clean = (client_id or "").strip()
     phone_n = _norm_phone(phone)
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="a valid email is required")
@@ -74,10 +75,11 @@ def register(db: Session, name: str, email: str, phone: str, password: str) -> U
         raise HTTPException(status_code=409, detail="an account with this email already exists — please log in")
     if db.query(User).filter(User.phone == phone_n).first():
         raise HTTPException(status_code=409, detail="an account with this phone already exists — please log in")
-    user = User(email=email, name=name, phone=phone_n,
-                password_hash=hash_password(password), role="user")
+    user = User(email=email, name=name, phone=phone_n, client_id=client_id_clean,
+                password_hash=hash_password(password), role="user", payment_status="pending")
     db.add(user)
-    db.flush()
+    db.commit()
+    db.refresh(user)
     return user
 
 

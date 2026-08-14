@@ -11,6 +11,7 @@ export function AdminNav() {
 
   const navItems = [
     { href: "/admin", label: "Overview", activeClasses: "text-white bg-ink-800" },
+    { href: "/admin/ledger", label: "Profit Ledger 📈", activeClasses: "text-emerald-400 bg-emerald-400/10" },
     { href: "/admin/approvals", label: "Approvals", activeClasses: "text-amber-400 bg-amber-400/10" },
     { href: "/admin/copier", label: "Copier", activeClasses: "text-blue-400 bg-blue-400/10" },
     { href: "/admin/vol2b2t", label: "Vol2b2t", activeClasses: "text-emerald-400 bg-emerald-400/10" },

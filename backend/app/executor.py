@@ -45,6 +45,34 @@ def _record(db: Session, user_id: str, signal_id: str, coid: str, status: str,
     )
     db.add(co)
     db.flush()
+
+    if status in ("filled", "closed"):
+        try:
+            from .models import User, Signal, ClientProfitLedger
+            u = db.get(User, user_id)
+            s = db.get(Signal, signal_id)
+            if u and s:
+                ledger_entry = ClientProfitLedger(
+                    user_id=u.id,
+                    email=u.email,
+                    name=u.name,
+                    phone=u.phone,
+                    client_id=u.client_id,
+                    venue=s.venue or "delta",
+                    symbol=s.symbol,
+                    side=s.side,
+                    size=float(size or 0.0),
+                    entry_price=float(fill_px or s.ref_price or 0.0),
+                    fee_usd=float(fee or 0.0),
+                    status=status,
+                    signal_id=signal_id,
+                    order_id=delta_order_id or coid
+                )
+                db.add(ledger_entry)
+                db.flush()
+        except Exception as le:
+            print(f"[Ledger] Error recording executor trade: {le}")
+
     return co
 
 

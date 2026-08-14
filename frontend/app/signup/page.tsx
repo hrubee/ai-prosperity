@@ -9,23 +9,20 @@ export default function SignupPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [clientId, setClientId] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
-
-  const plan =
-    typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("plan") : null;
-  const planQS = plan ? `?plan=${plan}` : "";
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr("");
     setBusy(true);
     try {
-      const r = await api.register(name, email, phone, password);
+      const r = await api.register(name, email, phone, password, clientId);
       setToken(r.token);
-      // Redirect to dashboard with plan so it can show the right QR amount
-      window.location.href = `/dashboard${plan ? `?plan=${plan}` : ""}`;
+      // Redirect to dashboard where pending approval state is shown
+      window.location.href = "/dashboard";
     } catch (e: any) {
       setErr(e.message || "Could not create your account");
     } finally {
@@ -34,7 +31,7 @@ export default function SignupPage() {
   }
 
   return (
-    <main className="grid min-h-screen place-items-center px-5">
+    <main className="grid min-h-screen place-items-center px-5 py-12">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex justify-center">
           <Logo />
@@ -42,7 +39,7 @@ export default function SignupPage() {
         <div className="card p-7">
           <h1 className="text-xl font-semibold text-white">Create your account</h1>
           <p className="mt-1 text-sm text-muted">
-            {plan ? `Sign up to continue to your selected plan.` : "Just your details — no verification code needed."}
+            Enter your details and Client ID to register for access approval.
           </p>
 
           {err && (
@@ -66,19 +63,24 @@ export default function SignupPage() {
                 placeholder="+91 98765 43210" value={phone} onChange={(e) => setPhone(e.target.value)} />
             </div>
             <div>
+              <label className="label" htmlFor="clientId">Tradejini Client ID</label>
+              <input id="clientId" type="text" required className="input"
+                placeholder="e.g. 10be2d096436" value={clientId} onChange={(e) => setClientId(e.target.value)} />
+            </div>
+            <div>
               <label className="label" htmlFor="password">Password</label>
               <input id="password" type="password" required minLength={8} autoComplete="new-password"
                 className="input" placeholder="At least 8 characters" value={password}
                 onChange={(e) => setPassword(e.target.value)} />
             </div>
             <button type="submit" className="btn-gold w-full" disabled={busy}>
-              {busy ? "Creating…" : "Create account"}
+              {busy ? "Registering…" : "Register for Approval"}
             </button>
           </form>
 
           <p className="mt-5 text-center text-sm text-muted">
             Already have an account?{" "}
-            <Link href={`/login${planQS}`} className="text-gold-400 hover:underline">Log in</Link>
+            <Link href="/login" className="text-gold-400 hover:underline">Log in</Link>
           </p>
         </div>
         <p className="mt-5 text-center text-xs text-muted">

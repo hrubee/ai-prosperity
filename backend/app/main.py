@@ -15,17 +15,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from typing import Optional
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from .dhan_poller import run_poller_async
 import asyncio
-from . import auth, dodo, orderbook, screener, signal_bus, tradejini, tradejini_auth, vol2b2t, volcontinuation, copier
+from . import auth, dodo, orderbook, screener, signal_bus, tradejini, tradejini_auth, vol2b2t, volcontinuation, copier, coindcx_copier
 from .config import settings
 from .crypto import decrypt_secret, encrypt_secret
 from .db import get_db
 from .delta import DeltaClient, DeltaError
-from .models import BrainEvent, ClientOrder, DeltaConnection, DhanConnection, PaymentScreenshot, PricingPlan, Signal, Subscription, TradejiniConnection, User
+from .models import BrainEvent, ClientOrder, ClientProfitLedger, DeltaConnection, DhanConnection, CoinDCXConnection, PaymentScreenshot, PricingPlan, Signal, Subscription, TradejiniConnection, User
 from .packages import PACKAGES
 
 log = logging.getLogger("api")
@@ -34,6 +34,7 @@ app = FastAPI(title="AI Prosperity API", version="0.1.0")
 app.include_router(vol2b2t.router, prefix="/vol2b2t")
 app.include_router(volcontinuation.router, prefix="/volcontinuation")
 app.include_router(copier.router)
+app.include_router(coindcx_copier.router)
 
 @app.on_event("startup")
 async def startup_event():
@@ -155,6 +156,7 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     phone: str = ""
     password: str
+    client_id: Optional[str] = None
 
 
 class LoginRequest(BaseModel):
@@ -227,17 +229,16 @@ def get_payment_status(user: User = Depends(auth.current_user), db: Session = De
 # ── auth ───────────────────────────────────────────────────
 @app.post("/auth/register")
 def register(body: RegisterRequest, db: Session = Depends(get_db)):
-    """Sign up a NEW user (name + email + phone + password; no OTP/email).
-    409 if the email or phone is already registered — they should log in."""
-    user = auth.register(db, body.name, body.email, body.phone, body.password)
-    return {"token": auth.make_jwt(user), "email": user.email, "role": user.role, "name": user.name}
+    """Sign up a NEW user (name + email + phone + password + client_id)."""
+    user = auth.register(db, body.name, body.email, body.phone, body.password, body.client_id)
+    return {"token": auth.make_jwt(user), "email": user.email, "role": user.role, "name": user.name, "client_id": user.client_id}
 
 
 @app.post("/auth/login")
 def login(body: LoginRequest, db: Session = Depends(get_db)):
     """Returning user: email OR phone + password."""
     user = auth.login(db, body.identifier, body.password)
-    return {"token": auth.make_jwt(user), "email": user.email, "role": user.role, "name": user.name}
+    return {"token": auth.make_jwt(user), "email": user.email, "role": user.role, "name": user.name, "client_id": user.client_id}
 
 
 @app.post("/auth/change-password")
@@ -256,7 +257,9 @@ def me(user: User = Depends(auth.current_user), db: Session = Depends(get_db)):
         "email": user.email,
         "name": user.name,
         "phone": user.phone,
+        "client_id": user.client_id,
         "role": user.role,
+        "payment_status": user.payment_status or "pending",
         "subscription": None if sub is None else {"package": sub.package, "status": sub.status},
         "connection": None if conn is None else {"status": conn.status, "paused": conn.paused},
     }
@@ -600,29 +603,21 @@ class AdminApprovePaymentRequest(BaseModel):
 
 @app.get("/admin/approvals")
 def admin_get_approvals(admin: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
-    users = db.query(User).filter(User.payment_status.in_(["pending", "pending_verification"])).all()
-    # also fetch users with a screenshot even if their status is approved or rejected, to show history
-    # Or actually let's just join the screenshot table.
+    # Fetch all registered non-admin users so admin can view, approve, and revoke access for any client
+    all_users = db.query(User).filter(User.role != "admin").order_by(User.created_at.desc()).all()
     
-    # We'll fetch all screenshots and the corresponding users.
     screenshots = db.query(PaymentScreenshot).order_by(PaymentScreenshot.created_at.desc()).all()
-    
-    # Let's map user_ids
-    user_ids = [s.user_id for s in screenshots]
-    users_with_ss = db.query(User).filter(User.id.in_(user_ids)).all()
-    user_map = {u.id: u for u in users_with_ss}
+    ss_map = {s.user_id: s for s in screenshots}
     
     res = []
-    # Add users with screenshots
-    for s in screenshots:
-        u = user_map.get(s.user_id)
-        if not u:
-            continue
+    for u in all_users:
+        s = ss_map.get(u.id)
         res.append({
             "user_id": u.id,
             "name": u.name,
             "email": u.email,
             "phone": u.phone,
+            "client_id": u.client_id,
             "payment_status": u.payment_status,
             "screenshot": {
                 "status": s.status,
@@ -631,23 +626,7 @@ def admin_get_approvals(admin: User = Depends(auth.require_admin), db: Session =
                 "created_at": s.created_at.isoformat() if s.created_at else None,
                 "reviewed_at": s.reviewed_at.isoformat() if s.reviewed_at else None,
                 "review_note": s.review_note
-            }
-        })
-        
-    # Add users who are pending but have NO screenshot uploaded yet
-    pending_users = db.query(User).filter(
-        User.payment_status.in_(["pending", "pending_verification"]),
-        ~User.id.in_(user_ids)
-    ).all()
-    
-    for u in pending_users:
-        res.append({
-            "user_id": u.id,
-            "name": u.name,
-            "email": u.email,
-            "phone": u.phone,
-            "payment_status": u.payment_status,
-            "screenshot": None
+            } if s else None
         })
         
     return res
@@ -790,6 +769,9 @@ def admin_clients(_: User = Depends(auth.require_admin), db: Session = Depends(g
         {
             "id": u.id,
             "email": u.email,
+            "name": u.name,
+            "phone": u.phone,
+            "client_id": u.client_id,
             "package": s.package if s else None,
             "subscription": s.status if s else None,
             "payment_status": u.payment_status,
@@ -861,6 +843,9 @@ def admin_client_detail(user_id: str, _: User = Depends(auth.require_admin), db:
     return {
         "id": u.id,
         "email": u.email,
+        "name": u.name,
+        "phone": u.phone,
+        "client_id": u.client_id,
         "role": u.role,
         "subscription": None if sub is None else {
             "package": sub.package,
@@ -939,6 +924,225 @@ def admin_disconnect(user_id: str, _: User = Depends(auth.require_admin), db: Se
         t.status = "disconnected"
         t.paused = True
     return {"status": "disconnected"}
+
+
+class AdminChangePasswordRequest(BaseModel):
+    new_password: str
+
+@app.post("/admin/clients/{user_id}/change-password")
+def admin_change_client_password(user_id: str, body: AdminChangePasswordRequest, _: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
+    u = db.get(User, user_id)
+    if u is None:
+        raise HTTPException(status_code=404, detail="client not found")
+    if len(body.new_password or "") < 8:
+        raise HTTPException(status_code=400, detail="password must be at least 8 characters")
+    u.password_hash = auth.hash_password(body.new_password)
+    db.add(u)
+    db.commit()
+    return {"result": f"Password updated for client {u.email}"}
+
+@app.delete("/admin/clients/{user_id}")
+def admin_delete_client(user_id: str, _: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
+    u = db.get(User, user_id)
+    if u is None:
+        raise HTTPException(status_code=404, detail="client not found")
+    
+    # Delete related rows
+    db.query(TradejiniConnection).filter(TradejiniConnection.user_id == user_id).delete()
+    db.query(DeltaConnection).filter(DeltaConnection.user_id == user_id).delete()
+    db.query(Subscription).filter(Subscription.user_id == user_id).delete()
+    db.query(ClientOrder).filter(ClientOrder.user_id == user_id).delete()
+    db.query(PaymentScreenshot).filter(PaymentScreenshot.user_id == user_id).delete()
+    db.delete(u)
+    db.commit()
+    return {"result": f"Client {u.email} permanently deleted"}
+
+
+class RecordProfitLedgerRequest(BaseModel):
+    user_id: str
+    symbol: str
+    side: str
+    size: float = 0.0
+    entry_price: float = 0.0
+    exit_price: float | None = None
+    realized_pnl_inr: float = 0.0
+    realized_pnl_usd: float = 0.0
+    fee_inr: float = 0.0
+    fee_usd: float = 0.0
+    venue: str = "tradejini"
+    status: str = "closed"
+    signal_id: str | None = None
+    order_id: str | None = None
+    notes: str | None = None
+
+@app.post("/admin/profit-ledger/record")
+def admin_record_profit_ledger(body: RecordProfitLedgerRequest, _: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
+    u = db.get(User, body.user_id)
+    email = u.email if u else f"user_{body.user_id[:8]}"
+    name = u.name if u else "Archived/Deleted Client"
+    phone = u.phone if u else None
+    client_id = u.client_id if u else None
+
+    entry = ClientProfitLedger(
+        user_id=body.user_id,
+        email=email,
+        name=name,
+        phone=phone,
+        client_id=client_id,
+        venue=body.venue,
+        symbol=body.symbol,
+        side=body.side,
+        size=body.size,
+        entry_price=body.entry_price,
+        exit_price=body.exit_price,
+        realized_pnl_inr=body.realized_pnl_inr,
+        realized_pnl_usd=body.realized_pnl_usd,
+        fee_inr=body.fee_inr,
+        fee_usd=body.fee_usd,
+        status=body.status,
+        signal_id=body.signal_id,
+        order_id=body.order_id,
+        notes=body.notes
+    )
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return {"result": "Recorded permanent profit ledger entry", "id": entry.id}
+
+@app.get("/admin/ledger")
+def admin_get_ledger_clients(_: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
+    users = db.query(User).all()
+    entries = db.query(ClientProfitLedger).order_by(ClientProfitLedger.executed_at.desc()).all()
+
+    clients_dict = {}
+    
+    # 1. Active / Pending / Rejected Clients
+    for u in users:
+        conn = db.query(TradejiniConnection).filter_by(user_id=u.id).one_or_none()
+        tj_conn = conn and conn.status == "connected" and not conn.paused
+        clients_dict[u.id] = {
+            "user_id": u.id,
+            "email": u.email,
+            "name": u.name or "Client",
+            "phone": u.phone,
+            "client_id": u.client_id,
+            "status": u.payment_status or "pending",
+            "tradejini_connected": bool(tj_conn),
+            "total_trades": 0,
+            "wins": 0,
+            "booked_pnl_inr": 0.0,
+            "total_fees_inr": 0.0,
+            "is_deleted": False,
+        }
+
+    # 2. Permanent Ledger Entries (including deleted/archived clients)
+    for e in entries:
+        uid = e.user_id
+        if uid not in clients_dict:
+            clients_dict[uid] = {
+                "user_id": uid,
+                "email": e.email,
+                "name": e.name or "Archived Client",
+                "phone": e.phone,
+                "client_id": e.client_id,
+                "status": "archived",
+                "tradejini_connected": False,
+                "total_trades": 0,
+                "wins": 0,
+                "booked_pnl_inr": 0.0,
+                "total_fees_inr": 0.0,
+                "is_deleted": True,
+            }
+        
+        c = clients_dict[uid]
+        c["total_trades"] += 1
+        if e.realized_pnl_inr > 0 or e.realized_pnl_usd > 0:
+            c["wins"] += 1
+        c["booked_pnl_inr"] += e.realized_pnl_inr
+        c["total_fees_inr"] += e.fee_inr
+
+    client_list = sorted(list(clients_dict.values()), key=lambda x: x["booked_pnl_inr"], reverse=True)
+    return {"clients": client_list}
+
+
+@app.get("/admin/ledger/{user_id}/profits")
+def admin_get_client_profits(user_id: str, _: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
+    u = db.get(User, user_id)
+    if u is None:
+        # Search by client_id or email
+        u = db.query(User).filter(or_(User.client_id == user_id, User.email == user_id)).one_or_none()
+    
+    query_id = u.id if u else user_id
+
+    entries = (
+        db.query(ClientProfitLedger)
+        .filter(
+            or_(
+                ClientProfitLedger.user_id == query_id,
+                ClientProfitLedger.client_id == user_id,
+                ClientProfitLedger.email == user_id
+            )
+        )
+        .order_by(ClientProfitLedger.executed_at.desc())
+        .all()
+    )
+    
+    db_pnl_inr = sum(e.realized_pnl_inr for e in entries)
+    total_fees_inr = sum(e.fee_inr for e in entries)
+    
+    tj_realized_pnl = None
+    tj_positions = []
+    tj_connected = False
+    
+    client_info = {
+        "user_id": u.id if u else query_id,
+        "email": u.email if u else (entries[0].email if entries else "Unknown"),
+        "name": u.name if u else (entries[0].name if entries else "Client"),
+        "phone": u.phone if u else (entries[0].phone if entries else None),
+        "client_id": u.client_id if u else (entries[0].client_id if entries else (user_id if not user_id.startswith("user_") else None)),
+        "status": u.payment_status if u else "archived",
+    }
+    
+    if u:
+        conn = db.query(TradejiniConnection).filter_by(user_id=u.id).one_or_none()
+        if conn and tradejini_auth.has_auto_creds(conn) and conn.status == "connected":
+            try:
+                token = tradejini_auth.ensure_client_token(db, conn)
+                tj_client = tradejini.TradejiniClient(token, api_key=conn.api_key)
+                tj_realized_pnl = tj_client.day_realized_pnl_inr()
+                tj_positions = tj_client.open_positions()
+                tj_connected = True
+            except Exception as e:
+                print(f"[Ledger Profits] Tradejini fetch note: {e}")
+
+    final_booked_pnl = tj_realized_pnl if (tj_realized_pnl is not None) else db_pnl_inr
+
+    return {
+        "client": client_info,
+        "tradejini_connected": tj_connected,
+        "booked_pnl_inr": round(final_booked_pnl, 2),
+        "db_realized_pnl_inr": round(db_pnl_inr, 2),
+        "tradejini_booked_pnl_inr": tj_realized_pnl,
+        "total_fees_inr": round(total_fees_inr, 2),
+        "total_trades": len(entries),
+        "tradejini_positions": tj_positions,
+        "entries": [
+            {
+                "id": e.id,
+                "symbol": e.symbol,
+                "side": e.side,
+                "size": e.size,
+                "entry_price": e.entry_price,
+                "exit_price": e.exit_price,
+                "realized_pnl_inr": round(e.realized_pnl_inr, 2),
+                "realized_pnl_usd": round(e.realized_pnl_usd, 2),
+                "fee_inr": round(e.fee_inr, 2),
+                "status": e.status,
+                "executed_at": e.executed_at.isoformat() if e.executed_at else None,
+            }
+            for e in entries
+        ]
+    }
 
 
 # ── admin: AI Vision brain log ─────────────────────────────

@@ -6,18 +6,18 @@ echo "Deploying aiprosperity to VPS..."
 # 1. Rsync backend and frontend to VPS
 rsync -avz --exclude "node_modules" --exclude ".next" --exclude "__pycache__" --exclude ".git" --exclude ".venv" \
     /Users/hrushi/Downloads/Desktop\ offline/vibe\ coding/go\ trader/go-trader/aiprosperity/ \
-    root@187.127.132.39:/root/aiprosperity/
+    root@srv1743322.hstgr.cloud:/root/aiprosperity/
 
 # 2. Inject UPI_QR_BASE64 into backend/.env on VPS
 # Extract from local go-trader/.env
 QR_VAR=$(grep "UPI_QR_BASE64=" "/Users/hrushi/Downloads/Desktop offline/vibe coding/go trader/go-trader/.env" || true)
 if [ -n "$QR_VAR" ]; then
-    ssh -o BatchMode=yes root@187.127.132.39 "sed -i '/^UPI_QR_BASE64=/d' /root/aiprosperity/backend/.env && echo '$QR_VAR' >> /root/aiprosperity/backend/.env"
+    ssh -o BatchMode=yes root@srv1743322.hstgr.cloud "sed -i '/^UPI_QR_BASE64=/d' /root/aiprosperity/backend/.env && echo '$QR_VAR' >> /root/aiprosperity/backend/.env"
     echo "Injected QR code to VPS backend/.env"
 fi
 
 # 3. Build frontend and restart services on VPS
-ssh -o BatchMode=yes root@187.127.132.39 'bash -s' << 'REMOTE_EOF'
+ssh -o BatchMode=yes root@srv1743322.hstgr.cloud 'bash -s' << 'REMOTE_EOF'
     set -e
     echo "Building frontend on VPS..."
     cd /root/aiprosperity/frontend

@@ -70,6 +70,7 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 @router.get("/api/logs")
+@router.get("/logs")
 def get_logs():
     logs = []
     try:
@@ -85,10 +86,12 @@ def get_logs():
     return logs
 
 @router.get("/api/copier-status")
+@router.get("/copier-status")
 def get_copier_status():
     return {"enabled": is_copier_enabled()}
 
 @router.post("/api/copier-toggle")
+@router.post("/copier-toggle")
 async def toggle_copier():
     current = is_copier_enabled()
     new_state = not current
@@ -144,6 +147,7 @@ def remove_order_mapping(dhan_order_id: str):
         pass
 
 @router.post("/api/webhook")
+@router.post("/webhook")
 async def receive_webhook(request: Request):
     payload = await request.json()
 
@@ -220,9 +224,6 @@ async def receive_webhook(request: Request):
         if not do_place and not do_cancel and not do_modify:
             return {"status": "ignored"}
             
-        dhan_product = payload.get("productType", "").upper()
-        tj_product = "mis" if dhan_product == "INTRADAY" else "normal"
-
         action = payload.get("transactionType", "").upper() 
         if action == "B":
             action = "BUY"
@@ -254,9 +255,22 @@ async def receive_webhook(request: Request):
                     trading_symbol = f"{und}{year}{month}{parts[2]}{parts[3]}"
                 elif len(parts) == 3 and parts[2] == "FUT":
                     trading_symbol = f"{und}{year}{month}FUT"
+        elif " " in trading_symbol:
+            opt_und = trading_symbol.upper().split(" ")[0]
+            
+        if not opt_und and trading_symbol:
+            opt_und = trading_symbol.upper().replace("-", " ").split(" ")[0]
                     
         if opt_expiry and opt_strike > 0 and opt_type in ("CE", "PE"):
             is_opt = True
+
+        # Product Type Resolution: Tradejini XTS API requires "normal" (NRML) for Options / F&O contracts!
+        # Passing "mis" or "intraday" on options causes Tradejini OM07: Invalid product type.
+        dhan_product = payload.get("productType", "").upper()
+        if is_opt or payload.get("exchangeSegment") in ("NSE_FNO", "BSE_FNO"):
+            tj_product = "normal"
+        else:
+            tj_product = "mis" if dhan_product == "INTRADAY" else "normal"
             
     else:
         action = payload.get("action", "").upper()
@@ -388,19 +402,29 @@ async def receive_webhook(request: Request):
                 
                 if dhan_order_id:
                     save_order_mapping(dhan_order_id, client.api_key, resp)
-                
-                # Save client order history
-                with db.session_scope() as session:
-                    co = ClientOrder(
+
+                # Record permanent trade entry in ClientProfitLedger
+                try:
+                    from .models import ClientProfitLedger
+                    ledger_entry = ClientProfitLedger(
                         user_id=user.id,
-                        symbol=trading_symbol,
+                        email=user.email,
+                        name=user.name,
+                        phone=user.phone,
+                        client_id=user.client_id,
+                        venue="tradejini",
+                        symbol=trading_symbol or str(sym_id),
                         side=action.lower(),
-                        qty=quantity,
-                        exchange_order_id=resp,
+                        size=float(quantity),
+                        entry_price=float(limit_price or 0.0),
+                        fee_inr=20.0,
                         status="filled",
-                        details={"type": "dhan_copy", "dhan_id": dhan_order_id}
+                        order_id=str(resp)
                     )
-                    session.add(co)
+                    session.add(ledger_entry)
+                    session.flush()
+                except Exception as le:
+                    print(f"[Ledger] Note: {le}")
                 
                 await manager.broadcast(json.dumps({
                     "type": "trade_placed",

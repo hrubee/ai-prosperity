@@ -39,8 +39,9 @@ class User(Base):
     # Nullable so pre-password (legacy OTP) rows load; new signups always set them.
     name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    client_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # Payment approval status for offline/UPI flow
+    # Payment / Account approval status
     payment_status: Mapped[str] = mapped_column(String(16), default="pending")  # pending | approved | rejected
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -163,6 +164,25 @@ class DhanConnection(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
 
+class CoinDCXConnection(Base):
+    """A client's CoinDCX account credentials.
+    The client provides their CoinDCX API Key and API Secret.
+    Secret is stored Fernet-encrypted.
+    """
+    __tablename__ = "coindcx_connections"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
+    api_key: Mapped[str] = mapped_column(String(128))
+    api_secret_encrypted: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default="connected")  # connected|invalid|disconnected
+    paused: Mapped[bool] = mapped_column(Boolean, default=False)
+    balance_usdt: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    user: Mapped[User] = relationship()
+
+
 class StraddlePosition(Base):
     """Durable per-leg record for the NIFTY options straddle (Phase 4 CANARY).
 
@@ -228,6 +248,7 @@ class ClientOrder(Base):
     signal_id: Mapped[str] = mapped_column(ForeignKey("signals.id"), index=True)
     client_order_id: Mapped[str] = mapped_column(String(32))  # Delta idempotency key (<=32 chars)
     delta_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    symbol: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(24), default="pending")
     # pending|filled|skipped_entitlement|skipped_margin|error|closed
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -306,3 +327,42 @@ class BrainEvent(Base):
     action: Mapped[str] = mapped_column(String(16), index=True)
     signal_id: Mapped[str | None] = mapped_column(String(32), nullable=True)  # the Signal it published, if any
     chart_b64: Mapped[str | None] = mapped_column(Text, nullable=True)        # PNG bytes, base64
+
+
+class ClientProfitLedger(Base):
+    """PERMANENT, append-only ledger storing every client's executed trades, fill prices,
+    exit prices, and realized PnL (profit/loss).
+
+    CRITICAL RULE: This table MUST NOT have foreign key cascade deletion or be cleared when
+    a client user account is deleted, revoked, or disconnected. User identity attributes
+    (user_id, email, name, phone, client_id) are snapshot as immutable plain text fields at
+    trade execution time so historical financial audit records remain 100% intact forever.
+    """
+    __tablename__ = "client_profit_ledger"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)         # Immutable snapshot user_id (NO FK constraint)
+    email: Mapped[str] = mapped_column(String(255), index=True)           # Immutable snapshot email
+    name: Mapped[str | None] = mapped_column(String(120), nullable=True)  # Immutable snapshot name
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True) # Immutable snapshot phone
+    client_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True) # Immutable snapshot Tradejini Client ID
+    
+    venue: Mapped[str] = mapped_column(String(16), default="tradejini")  # tradejini | delta | coindcx
+    symbol: Mapped[str] = mapped_column(String(64), index=True)          # e.g. NIFTY, BANKNIFTY, BTC/USDT
+    side: Mapped[str] = mapped_column(String(16))                        # buy | sell | short | cover
+    size: Mapped[float] = mapped_column(Float, default=0.0)             # Quantity / Contracts
+    entry_price: Mapped[float] = mapped_column(Float, default=0.0)        # Entry price per unit
+    exit_price: Mapped[float | None] = mapped_column(Float, nullable=True) # Exit price per unit (if closed)
+    
+    realized_pnl_inr: Mapped[float] = mapped_column(Float, default=0.0)  # Realized PnL in INR
+    realized_pnl_usd: Mapped[float] = mapped_column(Float, default=0.0)  # Realized PnL in USD
+    fee_inr: Mapped[float] = mapped_column(Float, default=0.0)           # Brokerage & exchange fees in INR
+    fee_usd: Mapped[float] = mapped_column(Float, default=0.0)           # Fees in USD
+    
+    status: Mapped[str] = mapped_column(String(24), default="closed")    # open | closed | cancelled
+    signal_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

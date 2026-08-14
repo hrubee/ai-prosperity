@@ -9,6 +9,9 @@ import { ManageDrawer } from "./ManageDrawer";
 type Client = {
   id: string;
   email: string;
+  name?: string | null;
+  phone?: string | null;
+  client_id?: string | null;
   package: string | null;
   subscription: string | null;
   payment_status: string;
@@ -74,22 +77,9 @@ export default function Admin() {
 
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           {stat("Total clients", String(stats?.total_clients ?? "—"))}
-          {stat("Active subscribers", String(stats?.active_subscribers ?? "—"))}
-          {stat("MRR", stats ? formatInr(stats.mrr_inr) : "—")}
-          {stat("Connected", String(clients.filter((c) => c.connection === "connected").length))}
-        </div>
-
-        {/* Subscriptions sold, broken down by plan */}
-        <div className="mt-6">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted">
-            Subscriptions sold by plan
-          </h2>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
-            {stats &&
-              Object.entries(stats.by_package).map(([id, p]) => (
-                <PlanCard key={id} id={id} p={p} onReload={reload} />
-              ))}
-          </div>
+          {stat("Approved access", String(clients.filter((c) => c.payment_status === "approved").length))}
+          {stat("Pending approval", String(clients.filter((c) => c.payment_status === "pending" || c.payment_status === "pending_verification").length))}
+          {stat("Tradejini connected", String(clients.filter((c) => c.tradejini === "connected").length))}
         </div>
 
         <div className="card mt-6 p-5">
@@ -110,20 +100,27 @@ export default function Admin() {
                 <thead className="text-left text-xs uppercase tracking-wider text-muted">
                   <tr>
                     <th className="pb-2">Client</th>
-                    <th className="pb-2">Plan</th>
-                    <th className="pb-2">Subscription</th>
+                    <th className="pb-2">Phone</th>
+                    <th className="pb-2">Tradejini Client ID</th>
+                    <th className="pb-2">Access Status</th>
                     <th className="pb-2">Connection</th>
                     <th className="pb-2"></th>
                   </tr>
                 </thead>
                 <tbody className="text-slate-300">
                   {filtered.map((c) => (
-                    <tr key={c.email} className="border-t border-ink-800">
-                      <td className="py-3 font-medium text-white">{c.email}</td>
-                      <td className="capitalize">{c.package ?? "—"}</td>
+                    <tr key={c.id || c.email} className="border-t border-ink-800">
+                      <td className="py-3 font-medium text-white">
+                        <div>{c.name || "Unknown Name"}</div>
+                        <div className="text-xs text-muted font-normal">{c.email}</div>
+                      </td>
+                      <td className="font-mono text-sm text-slate-300">
+                        {c.phone ? (c.phone.length === 10 ? `+91 ${c.phone.slice(0, 5)} ${c.phone.slice(5)}` : c.phone) : "—"}
+                      </td>
+                      <td className="font-mono text-gold-400 font-semibold">{c.client_id || "—"}</td>
                       <td>
                         <Badge ok={c.payment_status === "approved" || c.subscription === "active"}>
-                          {c.payment_status === "approved" ? "subscribed" : (c.subscription ?? "none")}
+                          {c.payment_status === "approved" ? "Approved" : (c.subscription ?? "Pending")}
                         </Badge>
                       </td>
                       <td>
@@ -133,7 +130,7 @@ export default function Admin() {
                       </td>
                       <td className="text-right">
                         <button
-                          className="btn-ghost !px-3 !py-1.5 text-xs"
+                          className="btn-gold !px-3 !py-1.5 text-xs font-semibold"
                           onClick={() => setManageId(c.id)}
                         >
                           Manage
@@ -180,65 +177,5 @@ function Badge({ ok, children }: { ok: boolean; children: React.ReactNode }) {
       <span className={`h-1.5 w-1.5 rounded-full ${ok ? "bg-gain" : "bg-loss"}`} />
       {children}
     </span>
-  );
-}
-
-function PlanCard({ id, p, onReload }: { id: string; p: any; onReload: () => void }) {
-  const [editing, setEditing] = useState(false);
-  const [price, setPrice] = useState(p.price_inr);
-  const [saving, setSaving] = useState(false);
-
-  async function save() {
-    setSaving(true);
-    try {
-      await api.updatePlan(parseInt(id), parseInt(price));
-      setEditing(false);
-      onReload();
-    } catch (e: any) {
-      alert("Failed to update plan: " + e.message);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  // legacy plans (like 'starter', 'pro') shouldn't be editable here, only numeric (1,3,6,12)
-  const isEditable = !isNaN(parseInt(id));
-
-  return (
-    <div className="card flex flex-col p-5">
-      <div className="flex items-center justify-between mb-4">
-        <p className="font-semibold text-white">{p.name}</p>
-        {!editing && isEditable && (
-          <button onClick={() => setEditing(true)} className="text-xs text-gold-400 hover:underline">
-            Edit
-          </button>
-        )}
-      </div>
-
-      {editing ? (
-        <div className="mb-4">
-          <label className="text-xs text-muted block mb-1">Price (INR)</label>
-          <div className="flex gap-2">
-            <input type="number" className="input text-sm py-1" value={price} onChange={e => setPrice(e.target.value)} />
-            <button className="btn-gold !px-3 !py-1 text-xs" onClick={save} disabled={saving}>{saving ? "..." : "Save"}</button>
-            <button className="btn-ghost !px-3 !py-1 text-xs" onClick={() => {setEditing(false); setPrice(p.price_inr)}}>Cancel</button>
-          </div>
-        </div>
-      ) : (
-        <div className="mb-4">
-          <span className="pill">{formatInr(p.price_inr)}</span>
-        </div>
-      )}
-
-      <div className="mt-auto">
-        <div className="flex items-end gap-2">
-          <span className="text-3xl font-bold text-gold-400">{p.active}</span>
-          <span className="pb-1 text-sm text-muted">active</span>
-        </div>
-        <p className="mt-1 text-xs text-muted">
-          {p.total} total sold · {formatInr(p.active * p.price_inr)}/mo
-        </p>
-      </div>
-    </div>
   );
 }
