@@ -477,7 +477,11 @@ def main():
                                             A.update_tpsl(pos_id, base, sl_price=desired_sl)
                                             log(f"[{base}] 🔒 Updated exchange Stop Loss to {desired_sl} on CoinDCX Acc 1")
                                         except Exception as e:
+                                            err_str = str(e)
                                             log(f"[{base}] Update exchange SL error (Acc 1): {e}")
+                                            if "Trigger price should be less than" in err_str or "less than the current price" in err_str:
+                                                log(f"[{base}] ⚠️ Price retraced below trailing SL {desired_sl}. Triggering immediate exit!")
+                                                cur_price = min(cur_price, desired_sl)
                                     if ARMED and A2:
                                         try:
                                             p2 = next((p for p in (A2.fetch_positions() or []) if p.get("base") == base), None)
