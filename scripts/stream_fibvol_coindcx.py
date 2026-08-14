@@ -29,8 +29,8 @@ TF_SEC = {"1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600}.get(TF, 900)
 TF_MS = TF_SEC * 1000
 
 SPIKE_VOL_MULT = float(os.environ.get("FIBVOL_SPIKE_VOL", "15.0"))
-ENTRY_FIB_LEVEL = float(os.environ.get("FIBVOL_ENTRY_FIB", "0.618"))
-SL_FIB_LEVEL = float(os.environ.get("FIBVOL_SL_FIB", "0.786"))
+ENTRY_FIB_LEVEL = float(os.environ.get("FIBVOL_ENTRY_FIB", "0.700"))
+SL_FIB_LEVEL = float(os.environ.get("FIBVOL_SL_FIB", "0.800"))
 RR_RATIO = float(os.environ.get("FIBVOL_RR_RATIO", "5.0"))
 
 TRAIL_ENABLE = os.environ.get("FIBVOL_TRAIL_ENABLE", "1") == "1"

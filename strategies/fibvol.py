@@ -12,7 +12,7 @@ Core Logic:
 import numpy as np
 import pandas as pd
 
-def fibvol_core(df: pd.DataFrame, spike_vol: float = 30.0, entry_fib: float = 0.618, sl_fib: float = 0.786, rr_ratio: float = 4.0) -> pd.DataFrame:
+def fibvol_core(df: pd.DataFrame, spike_vol: float = 30.0, entry_fib: float = 0.7, sl_fib: float = 0.8, rr_ratio: float = 4.0) -> pd.DataFrame:
     """Calculates FIBVOL signals and Fibonacci levels on OHLCV dataframe.
     
     Expects df with columns: ['open', 'high', 'low', 'close', 'volume']
