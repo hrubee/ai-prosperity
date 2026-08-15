@@ -28,13 +28,13 @@ TF = os.environ.get("FIBVOL_TF", "15m")
 TF_SEC = {"1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600}.get(TF, 900)
 TF_MS = TF_SEC * 1000
 
-SPIKE_VOL_MULT = float(os.environ.get("FIBVOL_SPIKE_VOL", "30.0"))
+SPIKE_VOL_MULT = float(os.environ.get("FIBVOL_SPIKE_VOL", "10.0"))
 ENTRY_FIB_LEVEL = float(os.environ.get("FIBVOL_ENTRY_FIB", "0.600"))
 SL_FIB_LEVEL = float(os.environ.get("FIBVOL_SL_FIB", "0.700"))
 RR_RATIO = float(os.environ.get("FIBVOL_RR_RATIO", "5.0"))
 
 TRAIL_ENABLE = os.environ.get("FIBVOL_TRAIL_ENABLE", "1") == "1"
-TRAIL_ACT_R = float(os.environ.get("FIBVOL_TRAIL_ACT_R", "2.0"))  # Activate trailing SL at +2.0R profit
+TRAIL_ACT_R = float(os.environ.get("FIBVOL_TRAIL_ACT_R", "1.0"))  # Activate trailing SL at +1.0R profit
 TRAIL_DIST_R = float(os.environ.get("FIBVOL_TRAIL_DIST_R", "1.0")) # Trail 1.0R behind peak high
 
 RISK_FRAC = float(os.environ.get("FIBVOL_RISK_FRAC", "0.01"))  # 1% risk per trade
