@@ -14,8 +14,6 @@ export function AdminNav() {
     { href: "/admin/ledger", label: "Profit Ledger 📈", activeClasses: "text-emerald-400 bg-emerald-400/10" },
     { href: "/admin/approvals", label: "Approvals", activeClasses: "text-amber-400 bg-amber-400/10" },
     { href: "/admin/copier", label: "Copier", activeClasses: "text-blue-400 bg-blue-400/10" },
-    { href: "/admin/vol2b2t", label: "Vol2b2t", activeClasses: "text-emerald-400 bg-emerald-400/10" },
-    { href: "/admin/volcontinuation", label: "VolContinuation", activeClasses: "text-teal-400 bg-teal-400/10" },
     { href: "/admin/dhan", label: "Dhan", activeClasses: "text-gold-500 bg-gold-500/10" },
     { href: "/admin/poller", label: "Poller", activeClasses: "text-purple-400 bg-purple-400/10" },
   ];

@@ -28,7 +28,7 @@ TF = os.environ.get("FIBVOL_TF", "15m")
 TF_SEC = {"1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600}.get(TF, 900)
 TF_MS = TF_SEC * 1000
 
-SPIKE_VOL_MULT = float(os.environ.get("FIBVOL_SPIKE_VOL", "15.0"))
+SPIKE_VOL_MULT = float(os.environ.get("FIBVOL_SPIKE_VOL", "30.0"))
 ENTRY_FIB_LEVEL = float(os.environ.get("FIBVOL_ENTRY_FIB", "0.700"))
 SL_FIB_LEVEL = float(os.environ.get("FIBVOL_SL_FIB", "0.800"))
 RR_RATIO = float(os.environ.get("FIBVOL_RR_RATIO", "5.0"))
@@ -349,7 +349,7 @@ def evaluate_fibvol_signal(base, klines_tuple, now_ms, state):
                 watching["tp_px"] = tp_px
                 watching["last_eval_t"] = cur_t
                 watching["spike_mult"] = vol_mult
-                log(f"[{base}] 🔄 UPDATED GREEN CANDLE FIB LEVELS (0.6 Entry / 0.7 SL): Entry={entry_px}, SL={sl_px}, TP={tp_px}")
+                log(f"[{base}] 🔄 UPDATED GREEN CANDLE FIB LEVELS ({ENTRY_FIB_LEVEL} Entry / {SL_FIB_LEVEL} SL): Entry={entry_px}, SL={sl_px}, TP={tp_px}")
                 return watching, "WATCH_UPDATED"
         else:
             # Red candle closed -> stop watching this coin!
@@ -378,7 +378,7 @@ def evaluate_fibvol_signal(base, klines_tuple, now_ms, state):
                     "sl_px": sl_px,
                     "tp_px": tp_px
                 }
-                log(f"[{base}] 🚀 15X VOLUME SPIKE DETECTED ({vol_mult:.1f}x)! Fib 0.6 Entry={entry_px}, SL={sl_px}, TP={tp_px}")
+                log(f"[{base}] 🚀 {SPIKE_VOL_MULT:.0f}X VOLUME SPIKE DETECTED ({vol_mult:.1f}x)! Fib {ENTRY_FIB_LEVEL} Entry={entry_px}, SL={sl_px}, TP={tp_px}")
                 return signal_info, "NEW_SPIKE"
                 
     return None, "NO_SIGNAL"
@@ -641,17 +641,23 @@ def main():
                             except Exception as e2:
                                 log(f"[{base}] Account 2 limit order placement error: {e2}")
                             
-                    log(f"[{base}] 🚀 LIMIT ORDER FILLED @ {cur_price:.6f} (Entry Fib: {entry_px:.6f})! Qty: {qty}")
-                    record_trade(base, "ENTRY_LONG", "LONG", cur_price, qty, f"SL={sl_px:.6f}, TP={tp_px:.6f}")
+                    fill_entry_px = entry_px
+                    if ARMED:
+                        exec_px, _, _ = A.fetch_executed_trade_vwap(base, side="buy")
+                        if exec_px > 0:
+                            fill_entry_px = exec_px
+                            
+                    log(f"[{base}] 🚀 LIMIT ORDER FILLED @ {fill_entry_px:.6f} (Target Fib {ENTRY_FIB_LEVEL}: {entry_px:.6f})! Qty: {qty}")
+                    record_trade(base, "ENTRY_LONG", "LONG", fill_entry_px, qty, f"SL={sl_px:.6f}, TP={tp_px:.6f}")
                     
-                    msg_id = post_entry_chart(base, cur_price, sl_px, tp_px)
+                    msg_id = post_entry_chart(base, fill_entry_px, sl_px, tp_px)
                     
                     state["positions"][base] = {
                         "symbol": base,
-                        "entry_px": cur_price,
+                        "entry_px": fill_entry_px,
                         "sl_px": sl_px,
                         "initial_sl_px": sl_px,
-                        "peak_px": cur_price,
+                        "peak_px": fill_entry_px,
                         "tp_px": tp_px,
                         "qty": qty,
                         "entry_t": now_ms,

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Logo } from "@/components/nav";
 import { api, clearToken, isAuthed, type Me, type OrderRow } from "@/lib/api";
+import { PROFIT_SPLIT_MODEL } from "@/lib/packages";
 
 export default function Dashboard() {
   const [me, setMe] = useState<Me | null>(null);
@@ -91,7 +92,7 @@ export default function Dashboard() {
                 <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-gold-500/10 text-gold-400 text-2xl font-bold mb-4">
                   ⏳
                 </div>
-                <h2 className="text-2xl font-bold text-white mb-2">Account Awaiting Approval</h2>
+                <h2 className="text-2xl font-bold text-white mb-2">Account Awaiting Admin Approval</h2>
                 <p className="text-sm text-muted leading-relaxed max-w-lg mx-auto mb-6">
                   Welcome <b className="text-white">{me?.name || me?.email}</b>! Your registration details and Tradejini Client ID (
                   <span className="font-mono text-gold-400 font-semibold">{me?.client_id || "Not set"}</span>) have been received.
@@ -104,19 +105,54 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* CoinDCX (Crypto Futures & Spot) connection */}
-            {isApproved && <CoinDCXPanel cdcx={cdcx} onReload={load} />}
+            {/* 60-40 Profit Share Model Card */}
+            {isApproved && (
+              <div className="card mb-6 p-5 border-gold-500/30 bg-ink-900/60">
+                <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                  <div>
+                    <span className="pill text-gold-400 border-gold-500/40 mb-2">
+                      Performance Model
+                    </span>
+                    <h3 className="text-lg font-bold text-white mt-1">60% Client Share · 40% Platform Share</h3>
+                    <p className="text-xs text-muted mt-0.5">
+                      Zero monthly subscription fees. Pay 40% performance share only when net profitable.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-4 text-right">
+                    <div>
+                      <p className="text-xs text-muted uppercase tracking-wider">Your Profit Share</p>
+                      <p className="text-xl font-bold text-gain">60%</p>
+                    </div>
+                    <div className="h-8 w-px bg-ink-800" />
+                    <div>
+                      <p className="text-xs text-muted uppercase tracking-wider">Platform Share</p>
+                      <p className="text-xl font-bold text-gold-400">40%</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
-            {/* Tradejini (Indian F&O) connection */}
-            {isApproved && <TradejiniPanel tj={tj} onReload={load} />}
+            {/* Exchange Connections Section (Visually Identical Layout) */}
+            {isApproved && (
+              <div className="space-y-4">
+                <h2 className="text-sm font-semibold text-muted uppercase tracking-wider">Connected Exchanges</h2>
+                
+                {/* Tradejini (Indian F&O) connection */}
+                <TradejiniPanel tj={tj} onReload={load} />
+
+                {/* CoinDCX (Crypto Futures & Spot) connection — COMING SOON */}
+                <CoinDCXPanel cdcx={cdcx} onReload={load} />
+              </div>
+            )}
 
             {/* Signal Feed */}
             {isApproved && (
-              <div className="mt-6 max-w-3xl">
+              <div className="mt-8 max-w-3xl">
                 <div className="card p-5">
-                  <h2 className="mb-4 font-semibold text-white">Recent signals</h2>
+                  <h2 className="mb-4 font-semibold text-white">Recent Signals &amp; Execution Feed</h2>
                   {orders.length === 0 ? (
-                    <p className="py-6 text-center text-sm text-muted">No activity yet.</p>
+                    <p className="py-6 text-center text-sm text-muted">No trade activity recorded yet.</p>
                   ) : (
                     <ul className="space-y-4">
                       {orders.map((s, i) => (
@@ -158,11 +194,20 @@ type TjState = Awaited<ReturnType<typeof api.myTradejini>> | null;
 function TradejiniPanel({ tj, onReload }: { tj: TjState; onReload: () => Promise<void> }) {
   if (!tj || !tj.connected_once) {
     return (
-      <div className="card mb-6 flex flex-col items-start justify-between gap-3 p-4 sm:flex-row sm:items-center">
-        <p className="text-sm text-muted">
-          Trade <b className="text-slate-200">Indian F&amp;O</b> (NIFTY / BankNIFTY)?
-        </p>
-        <Link href="/connect/tradejini" className="btn-ghost text-sm">
+      <div className="card flex flex-col items-start justify-between gap-4 p-5 sm:flex-row sm:items-center hover:border-ink-600 transition-colors">
+        <div className="flex items-center gap-3">
+          <span className="h-3 w-3 rounded-full bg-ink-600" />
+          <div>
+            <div className="flex items-center gap-2">
+              <p className="font-semibold text-white">Tradejini (Indian F&amp;O)</p>
+              <span className="pill text-xs">Live Platform</span>
+            </div>
+            <p className="text-sm text-muted mt-0.5">
+              Automate NIFTY &amp; BankNIFTY options copy trading.
+            </p>
+          </div>
+        </div>
+        <Link href="/connect/tradejini" className="btn-gold text-sm whitespace-nowrap">
           Connect Tradejini →
         </Link>
       </div>
@@ -170,15 +215,15 @@ function TradejiniPanel({ tj, onReload }: { tj: TjState; onReload: () => Promise
   }
 
   return (
-    <div className={`card mb-6 p-5 ${tj.error ? "border-loss/60" : ""}`}>
+    <div className={`card p-5 ${tj.error ? "border-loss/60" : ""}`}>
       <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
         <div className="flex items-center gap-3">
-          <span className={`h-2.5 w-2.5 rounded-full ${tj.connected ? "bg-gain" : "bg-loss"}`} />
+          <span className={`h-3 w-3 rounded-full ${tj.connected ? "bg-gain" : "bg-loss"}`} />
           <div>
             <p className="font-semibold text-white">
-              {tj.connected ? "Tradejini connected — Indian F&O live" : "Tradejini auto-renewing…"}
+              {tj.connected ? "Tradejini Connected — Indian F&O Live" : "Tradejini Auto-Renewing…"}
             </p>
-            <p className="text-sm text-muted">
+            <p className="text-sm text-muted mt-0.5">
               {tj.expires_at
                 ? `Session ends ${new Date(tj.expires_at).toLocaleTimeString([], {
                     hour: "2-digit",
@@ -223,61 +268,35 @@ function TradejiniPanel({ tj, onReload }: { tj: TjState; onReload: () => Promise
   );
 }
 
-// ── CoinDCXPanel ────────────────────────────────────────────────────────────
+// ── CoinDCXPanel (Visually Identical to Tradejini, Marked COMING SOON) ─────
 type CdcxState = Awaited<ReturnType<typeof api.coindcxStatus>> | null;
 
 function CoinDCXPanel({ cdcx, onReload }: { cdcx: CdcxState; onReload: () => Promise<void> }) {
-  if (!cdcx || !cdcx.connected) {
-    return (
-      <div className="card mb-6 flex flex-col items-start justify-between gap-3 p-4 sm:flex-row sm:items-center border-blue-500/30">
+  return (
+    <div className="card flex flex-col items-start justify-between gap-4 p-5 sm:flex-row sm:items-center opacity-85 border-ink-800 bg-ink-900/40">
+      <div className="flex items-center gap-3">
+        <span className="h-3 w-3 rounded-full bg-gold-500/60" />
         <div>
-          <p className="font-semibold text-white">CoinDCX (Crypto Futures &amp; Spot)</p>
-          <p className="text-sm text-muted">
-            Automate Crypto Futures trading 24/7 with 10x volume spike strategy copying.
+          <div className="flex items-center gap-2">
+            <p className="font-semibold text-white">CoinDCX (Crypto Futures &amp; Spot)</p>
+            <span className="pill border-gold-500/40 bg-gold-500/10 text-gold-400 text-xs font-semibold">
+              Coming Soon
+            </span>
+          </div>
+          <p className="text-sm text-muted mt-0.5">
+            Automate Crypto Futures trading 24/7 with 30x volume spike strategy copying.
           </p>
         </div>
-        <Link href="/connect/coindcx" className="btn-gold text-sm whitespace-nowrap">
-          Connect CoinDCX →
-        </Link>
       </div>
-    );
-  }
-
-  return (
-    <div className="card mb-6 p-5 border-blue-500/40">
-      <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
-        <div className="flex items-center gap-3">
-          <span className={`h-2.5 w-2.5 rounded-full ${!cdcx.paused ? "bg-gain" : "bg-gold-500"}`} />
-          <div>
-            <p className="font-semibold text-white">
-              CoinDCX Connected — {!cdcx.paused ? "Live 24/7 Copying Active" : "Copying Paused"}
-            </p>
-            <p className="text-xs text-muted font-mono mt-0.5">
-              API Key: {cdcx.api_key} {cdcx.balance_usdt !== undefined ? `· Balance: $${cdcx.balance_usdt.toFixed(2)} USDT` : ""}
-            </p>
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <button
-            className="btn-ghost text-sm"
-            onClick={async () => {
-              await api.coindcxPause();
-              await onReload();
-            }}
-          >
-            {cdcx.paused ? "Resume Copying" : "Pause Copying"}
-          </button>
-          <button
-            className="btn-ghost text-sm"
-            onClick={async () => {
-              await api.coindcxDisconnect();
-              await onReload();
-            }}
-          >
-            Disconnect
-          </button>
-        </div>
-      </div>
+      
+      {/* Disabled / Non-clickable button specifying Coming Soon */}
+      <button
+        disabled
+        className="btn-ghost text-sm whitespace-nowrap opacity-50 cursor-not-allowed border-ink-700 text-muted"
+        title="CoinDCX integration is coming soon"
+      >
+        Connect CoinDCX (Coming Soon)
+      </button>
     </div>
   );
 }
