@@ -84,16 +84,16 @@ try:
     from adapter import CoinDCXExchangeAdapter, CoinDCXError
 except ImportError:
     class CoinDCXError(Exception): pass
-        class CoinDCXExchangeAdapter:
-            inr_per_usdt = 84.0
-            def get_ohlcv(self, *args, **kwargs): return []
-            def get_price(self, *args, **kwargs): return 0
-            def fetch_positions(self): return []
-            def select_universe(self, *args, **kwargs): return []
-            def active_bases(self): return []
-            def market_open_bracket(self, *args, **kwargs): return {"id": "paper", "avg_price": 1}
-            def floor_qty(self, *args, **kwargs): return 1.0
-            def min_notional_usdt(self, *args, **kwargs): return 10.0
+    class CoinDCXExchangeAdapter:
+        inr_per_usdt = 84.0
+        def get_ohlcv(self, *args, **kwargs): return []
+        def get_price(self, *args, **kwargs): return 0
+        def fetch_positions(self): return []
+        def select_universe(self, *args, **kwargs): return []
+        def active_bases(self): return []
+        def market_open_bracket(self, *args, **kwargs): return {"id": "paper", "avg_price": 1}
+        def floor_qty(self, *args, **kwargs): return 1.0
+        def min_notional_usdt(self, *args, **kwargs): return 10.0
 
 A = CoinDCXExchangeAdapter()
 KEY_2 = os.environ.get("COINDCX_KEY_2", "").strip()
@@ -229,7 +229,9 @@ def apply_pnl(state, pnl_usdt):
     current_inr = float(state.get("_bal_inr", START_BAL_INR))
     state["_bal_inr"] = current_inr + (pnl_usdt * usdt_rate)
 
-def calculate_position_size(base, entry_px, sl_px, wallet_usdt):
+def calculate_position_size(base, entry_px, sl_px, wallet_usdt, adapter=None):
+    if adapter is None:
+        adapter = A
     if entry_px <= 0 or sl_px >= entry_px:
         return 0.0
     risk_per_unit = entry_px - sl_px
@@ -242,11 +244,11 @@ def calculate_position_size(base, entry_px, sl_px, wallet_usdt):
         qty = max_notional / entry_px
 
     # Cap position size relative to available free INR balance
-    if ARMED:
+    if ARMED and adapter:
         try:
-            free_inr = A.get_free_inr_balance()
+            free_inr = adapter.get_free_inr_balance()
             if free_inr > 0:
-                usdt_rate = getattr(A, "inr_per_usdt", 84.0) or 84.0
+                usdt_rate = getattr(adapter, "inr_per_usdt", 84.0) or 84.0
                 free_usdt = free_inr / usdt_rate
                 max_margin_qty = (free_usdt * LEVERAGE * 0.8) / entry_px
                 if qty > max_margin_qty:
@@ -255,10 +257,10 @@ def calculate_position_size(base, entry_px, sl_px, wallet_usdt):
             pass
         
     try:
-        min_notional = float(A.min_notional_usdt(base) or 10.0)
+        min_notional = float(adapter.min_notional_usdt(base) or 10.0)
         if qty * entry_px < min_notional:
             qty = min_notional / entry_px
-        qty = A.floor_qty(base, qty)
+        qty = adapter.floor_qty(base, qty)
     except Exception:
         pass
     return float(qty)
@@ -266,10 +268,15 @@ def calculate_position_size(base, entry_px, sl_px, wallet_usdt):
 def get_account2_qty(base, entry_px, sl_px):
     if not A2:
         return 0.0
-    bal_2 = float(os.environ.get("FIBVOL_OVERRIDE_BAL_INR_2", "20000.0"))
-    usdt_rate = 86.0
-    w_usdt_2 = bal_2 / usdt_rate
-    return calculate_position_size(base, entry_px, sl_px, w_usdt_2)
+    try:
+        free_inr_2 = A2.get_free_inr_balance()
+        if free_inr_2 <= 0:
+            return 0.0
+        usdt_rate = getattr(A2, "inr_per_usdt", 86.0) or 86.0
+        w_usdt_2 = free_inr_2 / usdt_rate
+        return calculate_position_size(base, entry_px, sl_px, w_usdt_2, adapter=A2)
+    except Exception:
+        return 0.0
 
 # ── Market Data Retrieval via CoinDCX API ──────────────────────────────────────
 def fetch_coin_klines(base):
