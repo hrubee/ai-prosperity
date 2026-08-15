@@ -29,8 +29,8 @@ TF_SEC = {"1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600}.get(TF, 900)
 TF_MS = TF_SEC * 1000
 
 SPIKE_VOL_MULT = float(os.environ.get("FIBVOL_SPIKE_VOL", "30.0"))
-ENTRY_FIB_LEVEL = float(os.environ.get("FIBVOL_ENTRY_FIB", "0.700"))
-SL_FIB_LEVEL = float(os.environ.get("FIBVOL_SL_FIB", "0.800"))
+ENTRY_FIB_LEVEL = float(os.environ.get("FIBVOL_ENTRY_FIB", "0.600"))
+SL_FIB_LEVEL = float(os.environ.get("FIBVOL_SL_FIB", "0.700"))
 RR_RATIO = float(os.environ.get("FIBVOL_RR_RATIO", "5.0"))
 
 TRAIL_ENABLE = os.environ.get("FIBVOL_TRAIL_ENABLE", "1") == "1"
@@ -324,6 +324,10 @@ def evaluate_fibvol_signal(base, klines_tuple, now_ms, state):
     cur_o, cur_h, cur_l, cur_c, cur_v = opens[ci], highs[ci], lows[ci], closes[ci], vols[ci]
     is_green = cur_c >= cur_o
     
+    # Stale data protection: ensure candle close is within 1.5 periods
+    if now_ms - (cur_t + TF_MS) >= TF_MS * 1.5:
+        return None, "STALE_DATA"
+    
     # Calculate 40-candle baseline volume SMA
     baseline_window = vols[ci - 40 : ci]
     avg_vol = float(np.mean(baseline_window))
@@ -341,9 +345,38 @@ def evaluate_fibvol_signal(base, klines_tuple, now_ms, state):
             # Same candle, no change
             return watching, "WATCHING_CURRENT"
             
-        # Keep watching the original fixed levels (aligns 100% with profitable backtest)
-        watching["last_eval_t"] = cur_t
-        return watching, "WATCHING_CONTINUE"
+        # New candle closed while watching!
+        if is_green:
+            # Re-plot Fibonacci levels on new green candle!
+            rng = cur_h - cur_l
+            if rng > 0:
+                entry_px = A._round_px(base, cur_h - (ENTRY_FIB_LEVEL * rng))
+                sl_px = A._round_px(base, cur_h - (SL_FIB_LEVEL * rng))
+                
+                # Risk distance too small / rounding safety check
+                inc = float(A.instrument(base).get("price_increment") or 0.0) if hasattr(A, "instrument") else 0.0
+                min_risk = max(3 * inc, entry_px * 0.001, 1e-8)
+                
+                if (entry_px - sl_px) >= min_risk:
+                    risk = entry_px - sl_px
+                    tp_px = A._round_px(base, entry_px + (RR_RATIO * risk))
+                    
+                    watching["entry_px"] = entry_px
+                    watching["sl_px"] = sl_px
+                    watching["tp_px"] = tp_px
+                    watching["last_eval_t"] = cur_t
+                    watching["spike_mult"] = vol_mult
+                    log(f"[{base}] 🔄 UPDATED GREEN CANDLE FIB LEVELS ({ENTRY_FIB_LEVEL} Entry / {SL_FIB_LEVEL} SL): Entry={entry_px}, SL={sl_px}, TP={tp_px}")
+                    return watching, "WATCH_UPDATED"
+                else:
+                    # Ignore range updates if the new range is too narrow to avoid risk contraction
+                    watching["last_eval_t"] = cur_t
+                    log(f"[{base}] ⚠️ New green candle range too narrow (risk {entry_px-sl_px:.6f} < min {min_risk:.6f}). Retaining previous levels.")
+                    return watching, "WATCHING_CONTINUE"
+        else:
+            # Red candle closed -> stop watching this coin!
+            log(f"[{base}] 🛑 RED CANDLE CLOSED ({cur_c:.6f} < {cur_o:.6f}). Cancelling watch loop.")
+            return None, "WATCH_CANCELLED"
             
     # Check for NEW 30x volume spike trigger
     if is_green and vol_mult >= SPIKE_VOL_MULT:
@@ -353,6 +386,13 @@ def evaluate_fibvol_signal(base, klines_tuple, now_ms, state):
             if rng > 0:
                 entry_px = A._round_px(base, cur_h - (ENTRY_FIB_LEVEL * rng))
                 sl_px = A._round_px(base, cur_h - (SL_FIB_LEVEL * rng))
+                
+                # Risk distance too small / rounding safety check
+                inc = float(A.instrument(base).get("price_increment") or 0.0) if hasattr(A, "instrument") else 0.0
+                min_risk = max(3 * inc, entry_px * 0.001, 1e-8)
+                if (entry_px - sl_px) < min_risk:
+                    return None, "RISK_DISTANCE_TOO_SMALL"
+                    
                 risk = entry_px - sl_px
                 tp_px = A._round_px(base, entry_px + (RR_RATIO * risk))
                 
@@ -596,8 +636,9 @@ def main():
                 
                 # Limit order trigger: current price retraces down to or below 0.5 Fib entry price!
                 if cur_price <= entry_px:
-                    if cur_price <= sl_px:
-                        log(f"[{base}] ⚠️ Price {cur_price:.6f} dropped below SL {sl_px:.6f} before fill. Skipping trade.")
+                    # Slippage Guard: if price has already crashed to or below SL (or within 0.2% of it), skip the trade
+                    if cur_price <= sl_px * 1.002:
+                        log(f"[{base}] ⚠️ Price {cur_price:.6f} is below or too close to SL {sl_px:.6f} (slippage guard). Skipping trade.")
                         del state["watching"][base]
                         save_state(state)
                         continue
