@@ -629,12 +629,17 @@ def main():
                     if qty <= 0:
                         continue
                         
+                    # Calculate Dynamic Isolated Leverage to align Exchange Liquidation Price at Stop Loss level
+                    sl_dist_pct = (entry_px - sl_px) / entry_px if entry_px > 0 else 0.10
+                    dyn_lev = int(1.0 / max(sl_dist_pct, 0.02)) if sl_dist_pct > 0 else LEVERAGE
+                    dyn_lev = max(1, min(dyn_lev, 50))
+
                     pos_id = None
                     if ARMED:
                         try:
-                            res = A.limit_open_bracket(base, is_buy=True, qty=qty, price=entry_px, leverage=LEVERAGE, sl_price=sl_px, tp_price=tp_px)
+                            res = A.limit_open_bracket(base, is_buy=True, qty=qty, price=entry_px, leverage=dyn_lev, sl_price=sl_px, tp_price=tp_px)
                             pos_id = res.get("id") or res.get("position_id") or res.get("order_id")
-                            log(f"[{base}] 🔴 LIVE LIMIT BRACKET ORDER PLACED ON COINDCX (Acc 1): Limit Px={entry_px:.6f}, ID={pos_id}")
+                            log(f"[{base}] 🔴 LIVE LIMIT BRACKET ORDER PLACED ON COINDCX (Acc 1): Limit Px={entry_px:.6f}, DynLev={dyn_lev}x, ID={pos_id}")
                         except Exception as e:
                             log(f"[{base}] Live limit order execution error (Acc 1): {e}")
                             if base in state["watching"]:
@@ -646,8 +651,8 @@ def main():
                             try:
                                 qty2 = get_account2_qty(base, entry_px, sl_px)
                                 if qty2 > 0:
-                                    res2 = A2.limit_open_bracket(base, is_buy=True, qty=qty2, price=entry_px, leverage=LEVERAGE, sl_price=sl_px, tp_price=tp_px)
-                                    log(f"[{base}] 🔴 LIVE LIMIT BRACKET ORDER PLACED ON COINDCX (Acc 2): Qty={qty2}, ID={res2.get('id')}")
+                                    res2 = A2.limit_open_bracket(base, is_buy=True, qty=qty2, price=entry_px, leverage=dyn_lev, sl_price=sl_px, tp_price=tp_px)
+                                    log(f"[{base}] 🔴 LIVE LIMIT BRACKET ORDER PLACED ON COINDCX (Acc 2): Qty={qty2}, DynLev={dyn_lev}x, ID={res2.get('id')}")
                             except Exception as e2:
                                 log(f"[{base}] Account 2 limit order placement error: {e2}")
                             
