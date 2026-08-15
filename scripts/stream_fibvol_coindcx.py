@@ -631,8 +631,8 @@ def main():
                         
                     # Calculate Dynamic Isolated Leverage to align Exchange Liquidation Price at Stop Loss level
                     sl_dist_pct = (entry_px - sl_px) / entry_px if entry_px > 0 else 0.10
-                    dyn_lev = int(1.0 / max(sl_dist_pct, 0.02)) if sl_dist_pct > 0 else LEVERAGE
-                    dyn_lev = max(1, min(dyn_lev, 50))
+                    dyn_lev = int(1.0 / max(sl_dist_pct, 0.033)) if sl_dist_pct > 0 else LEVERAGE
+                    dyn_lev = max(1, min(dyn_lev, 30))
 
                     pos_id = None
                     if ARMED:
