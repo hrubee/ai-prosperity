@@ -409,13 +409,8 @@ def main():
         try:
             now_ms = int(time.time() * 1000)
             
-            # 1. Fetch Universe (Restrict to top 50 most liquid coins with min $5,000,000 daily volume to avoid slippage/fee traps)
-            universe = sorted(list(A.select_universe(50, 5000000.0)))
-            active_local_bases = list(state.get("positions", {}).keys())
-            for ab in active_local_bases:
-                if ab not in universe:
-                    universe.append(ab)
-            universe = sorted(universe)
+            # 1. Fetch Universe
+            universe = sorted(list(A.active_bases() or A.select_universe(1000, 500000.0)))
             if not universe:
                 time.sleep(POLL_INTERVAL)
                 continue
