@@ -1,15 +1,25 @@
 [Unit]
-Description=FibVOL 15X Volume Spike Fibonacci CoinDCX Live Executor
+Description=FibVOL 10X Volume Spike Fibonacci CoinDCX Live Executor (100ms Ultra-Fast 10Hz)
 After=network.target
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root/ai-prosperity
-ExecStart=/root/ai-prosperity/.venv/bin/python /root/ai-prosperity/scripts/stream_fibvol_coindcx.py
+WorkingDirectory=/root/aiprosperity
+Environment=LIVE_ARMED=1
+Environment=FIBVOL_OVERRIDE_BAL_INR=15000
+Environment=FIBVOL_SPIKE_VOL=10.0
+Environment=FIBVOL_ENTRY_FIB=0.600
+Environment=FIBVOL_SL_FIB=0.700
+Environment=FIBVOL_RR_RATIO=10.0
+Environment=FIBVOL_TRAIL_ENABLE=1
+Environment=FIBVOL_TRAIL_ACT_R=1.0
+Environment=FIBVOL_TRAIL_DIST_R=1.0
+Environment=FIBVOL_POLL=0.1
+Environment=FIBVOL_RISK_FRAC=0.01
+ExecStart=/root/aiprosperity/backend/.venv/bin/python /root/aiprosperity/scripts/stream_fibvol_coindcx.py
 Restart=always
 RestartSec=5
-Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=multi-user.target
