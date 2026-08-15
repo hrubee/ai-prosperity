@@ -88,8 +88,22 @@ export default function Dashboard() {
         ) : (
           <>
             {notice && (
-              <div className="card mb-6 border-gold-500/40 p-3 text-center text-sm text-gold-400">
-                {notice}
+              <div className="mb-6 flex items-center justify-between rounded-2xl border border-gain/40 bg-gain/10 p-4.5 text-gain">
+                <div className="flex items-center gap-3.5">
+                  <span className="text-2xl">🎉</span>
+                  <div>
+                    <h3 className="font-bold text-white text-base">Tradejini Connected Successfully!</h3>
+                    <p className="text-xs text-gain/90 mt-0.5">
+                      Your Tradejini F&amp;O account is active and set to auto-renew. Your AI copy trading is live!
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setNotice("")}
+                  className="text-xs font-semibold text-muted hover:text-white px-2 py-1 transition-colors"
+                >
+                  ✕ Close
+                </button>
               </div>
             )}
 

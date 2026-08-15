@@ -24,7 +24,7 @@ export default function TradejiniConnectPage() {
     setSubmitting(true);
     try {
       await api.tradejiniConnect(apiKey, password, totpSeed);
-      window.location.href = "/dashboard";
+      window.location.href = "/dashboard?tradejini=connected";
     } catch (e: any) {
       setErr(e.message || "Could not connect — check your API key, login PIN, and TOTP seed");
     } finally {
