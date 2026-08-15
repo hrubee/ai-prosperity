@@ -162,42 +162,6 @@ export default function Dashboard() {
                 <CoinDCXPanel cdcx={cdcx} onReload={load} />
               </div>
             )}
-
-            {/* Signal Feed */}
-            {isApproved && (
-              <div className="mt-8 max-w-3xl">
-                <div className="card p-5">
-                  <h2 className="mb-4 font-semibold text-white">Recent Signals &amp; Execution Feed</h2>
-                  {orders.length === 0 ? (
-                    <p className="py-6 text-center text-sm text-muted">No trade activity recorded yet.</p>
-                  ) : (
-                    <ul className="space-y-4">
-                      {orders.map((s, i) => (
-                        <li key={i} className="flex gap-3 text-sm">
-                          <span className="mt-0.5 w-14 shrink-0 text-xs text-muted">
-                            {s.at ? new Date(s.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
-                          </span>
-                          <div>
-                            <p className="text-white">
-                              <span
-                                className={
-                                  s.side === "buy" ? "text-gain" : s.side === "sell" ? "text-loss" : "text-gold-400"
-                                }
-                              >
-                                {s.side.toUpperCase()}
-                              </span>{" "}
-                              {s.symbol}{" "}
-                              <span className="text-xs text-muted">· {s.status}</span>
-                            </p>
-                            {s.detail && <p className="text-muted">{s.detail}</p>}
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </div>
-            )}
           </>
         )}
       </div>

@@ -9,10 +9,12 @@ export default function SignupPage() {
   const [step, setStep] = useState<1 | 2>(1);
 
   // Step 1 fields
-  const [name, setName] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   // Step 2 field
   const [clientId, setClientId] = useState("");
@@ -23,8 +25,8 @@ export default function SignupPage() {
   function handleStep1Submit(e: React.FormEvent) {
     e.preventDefault();
     setErr("");
-    if (!name.trim() || !email.trim() || !phone.trim() || password.length < 8) {
-      setErr("Please complete all fields with a valid password (at least 8 characters).");
+    if (!firstName.trim() || !lastName.trim() || !email.trim() || !phone.trim() || password.length < 8) {
+      setErr("Please complete all required fields with a valid password (at least 8 characters).");
       return;
     }
     // Proceed to Step 2
@@ -40,8 +42,9 @@ export default function SignupPage() {
     }
 
     setBusy(true);
+    const fullName = `${firstName.trim()} ${lastName.trim()}`;
     try {
-      const r = await api.register(name, email, phone, password, clientId);
+      const r = await api.register(fullName, email, phone, password, clientId);
       setToken(r.token);
       // Registration successful -> redirect to dashboard (shows pending approval)
       window.location.href = "/dashboard";
@@ -94,26 +97,82 @@ export default function SignupPage() {
               </p>
 
               <form className="mt-6 space-y-4" onSubmit={handleStep1Submit}>
-                <div>
-                  <label className="label" htmlFor="name">Full name</label>
-                  <input id="name" type="text" required autoComplete="name" className="input"
-                    placeholder="Your full name" value={name} onChange={(e) => setName(e.target.value)} />
+                {/* First Name & Last Name Required Fields */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="label" htmlFor="firstName">
+                      First name <span className="text-loss">*</span>
+                    </label>
+                    <input
+                      id="firstName"
+                      type="text"
+                      required
+                      autoComplete="given-name"
+                      className="input"
+                      placeholder="First name"
+                      value={firstName}
+                      onChange={(e) => setFirstName(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="label" htmlFor="lastName">
+                      Last name <span className="text-loss">*</span>
+                    </label>
+                    <input
+                      id="lastName"
+                      type="text"
+                      required
+                      autoComplete="family-name"
+                      className="input"
+                      placeholder="Last name"
+                      value={lastName}
+                      onChange={(e) => setLastName(e.target.value)}
+                    />
+                  </div>
                 </div>
+
                 <div>
-                  <label className="label" htmlFor="email">Email address</label>
+                  <label className="label" htmlFor="email">
+                    Email address <span className="text-loss">*</span>
+                  </label>
                   <input id="email" type="email" required autoComplete="email" className="input"
                     placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
                 </div>
+
                 <div>
-                  <label className="label" htmlFor="phone">Phone number</label>
+                  <label className="label" htmlFor="phone">
+                    Phone number <span className="text-loss">*</span>
+                  </label>
                   <input id="phone" type="tel" required autoComplete="tel" className="input"
                     placeholder="+91 98765 43210" value={phone} onChange={(e) => setPhone(e.target.value)} />
                 </div>
+
+                {/* Password Input with Toggleable Visibility */}
                 <div>
-                  <label className="label" htmlFor="password">Password</label>
-                  <input id="password" type="password" required minLength={8} autoComplete="new-password"
-                    className="input" placeholder="At least 8 characters" value={password}
-                    onChange={(e) => setPassword(e.target.value)} />
+                  <label className="label" htmlFor="password">
+                    Password <span className="text-loss">*</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      id="password"
+                      type={showPassword ? "text" : "password"}
+                      required
+                      minLength={8}
+                      autoComplete="new-password"
+                      className="input pr-10"
+                      placeholder="At least 8 characters"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted hover:text-white transition-colors"
+                      title={showPassword ? "Hide password" : "Show password"}
+                    >
+                      {showPassword ? "🙈 Hide" : "👁️ Show"}
+                    </button>
+                  </div>
                 </div>
 
                 <button type="submit" className="btn-gold w-full mt-6">
@@ -134,14 +193,16 @@ export default function SignupPage() {
               <form className="mt-6 space-y-4" onSubmit={handleFinalSubmit}>
                 <div className="rounded-xl border border-gold-500/20 bg-gold-500/5 p-4 mb-4">
                   <p className="text-xs text-gold-400 font-medium">
-                    👤 Registering for: <span className="text-white font-semibold">{name}</span> ({email})
+                    👤 Registering for: <span className="text-white font-semibold">{firstName} {lastName}</span> ({email})
                   </p>
                 </div>
 
                 <div>
-                  <label className="label" htmlFor="clientId">Tradejini Client ID</label>
+                  <label className="label" htmlFor="clientId">
+                    Tradejini Client ID <span className="text-loss">*</span>
+                  </label>
                   <input id="clientId" type="text" required autoFocus className="input"
-                    placeholder="e.g. 10be2d096436" value={clientId} onChange={(e) => setClientId(e.target.value)} />
+                    placeholder="e.g. Ts4402" value={clientId} onChange={(e) => setClientId(e.target.value)} />
                   <p className="mt-1.5 text-xs text-muted">
                     Your Tradejini F&amp;O client ID will be sent directly for admin review.
                   </p>

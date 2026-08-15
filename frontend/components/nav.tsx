@@ -42,18 +42,7 @@ export function Footer() {
   return (
     <footer className="border-t border-ink-800 py-10 text-sm text-muted">
       <div className="container-x flex flex-col items-center justify-between gap-4 sm:flex-row">
-        <div>
-          <Logo />
-          <div className="mt-3 flex items-center gap-4 text-xs">
-            <Link href="/terms" className="hover:text-white underline">
-              Terms &amp; Risk Disclosure
-            </Link>
-            <span>·</span>
-            <Link href="/privacy" className="hover:text-white underline">
-              Privacy Policy
-            </Link>
-          </div>
-        </div>
+        <Logo />
         <p className="text-center sm:text-right text-xs">
           Trading involves risk of loss. Not financial advice. You control your funds at all times.
           <br className="hidden sm:block" />
