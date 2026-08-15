@@ -13,13 +13,9 @@ export default async function Home() {
       <section className="relative overflow-hidden">
         <div className="container-x py-20 sm:py-28">
           <div className="mx-auto max-w-3xl text-center">
-            <span className="pill mx-auto">
-              <span className="h-1.5 w-1.5 rounded-full bg-gain" />
-              Live AI Brain · Zero Upfront Fee · 60-40 Profit Split
-            </span>
-            <h1 className="mt-6 text-4xl font-bold leading-tight tracking-tight text-white sm:text-6xl">
+            <h1 className="text-4xl font-bold leading-tight tracking-tight text-white sm:text-6xl">
               One AI brain.{" "}
-              <span className="text-gold-400">Keep 60% of your profits.</span>
+              <span className="text-gold-400">Your account on autopilot.</span>
             </h1>
             <p className="mx-auto mt-6 max-w-2xl text-lg text-muted">
               Zero monthly subscriptions. Pay 40% performance share only when the strategy makes you net profits.
