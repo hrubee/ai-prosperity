@@ -238,8 +238,8 @@ def calculate_position_size(base, entry_px, sl_px, wallet_usdt, adapter=None):
     risk_usdt = max(wallet_usdt * RISK_FRAC, 1.0)
     qty = risk_usdt / (risk_per_unit + (entry_px * 0.0012))
     
-    # Cap position leverage relative to wallet
-    max_notional = wallet_usdt * LEVERAGE * 0.5
+    # Cap position leverage relative to wallet (Max 2.0x wallet equity notional size)
+    max_notional = wallet_usdt * 2.0
     if qty * entry_px > max_notional:
         qty = max_notional / entry_px
 
