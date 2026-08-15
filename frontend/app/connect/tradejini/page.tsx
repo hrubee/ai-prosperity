@@ -39,6 +39,20 @@ export default function TradejiniConnectPage() {
           <Logo />
         </div>
 
+        {/* Prominent Static IP Banner */}
+        <div className="mb-6 rounded-2xl border border-gold-500/40 bg-gold-500/10 p-4 text-center">
+          <p className="text-xs uppercase tracking-wider text-gold-400 font-semibold mb-1">
+            🌐 Tradejini Server Static IP (Egress)
+          </p>
+          <div className="flex items-center justify-center gap-3 mt-1">
+            <code className="font-mono text-xl font-bold text-white tracking-wider">{STATIC_EGRESS_IP}</code>
+            <CopyButton text={STATIC_EGRESS_IP} />
+          </div>
+          <p className="text-xs text-muted mt-2">
+            Whitelist this IP in your Tradejini App developer portal settings.
+          </p>
+        </div>
+
         {/* Stepper */}
         <ol className="mb-8 flex items-center justify-between text-xs">
           {steps.map((s, i) => (
