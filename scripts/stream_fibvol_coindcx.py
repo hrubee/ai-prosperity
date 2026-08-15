@@ -341,27 +341,9 @@ def evaluate_fibvol_signal(base, klines_tuple, now_ms, state):
             # Same candle, no change
             return watching, "WATCHING_CURRENT"
             
-        # New candle closed while watching!
-        if is_green:
-            # Re-plot Fibonacci levels on new green candle!
-            rng = cur_h - cur_l
-            if rng > 0:
-                entry_px = A._round_px(base, cur_h - (ENTRY_FIB_LEVEL * rng))
-                sl_px = A._round_px(base, cur_h - (SL_FIB_LEVEL * rng))
-                risk = entry_px - sl_px
-                tp_px = A._round_px(base, entry_px + (RR_RATIO * risk))
-                
-                watching["entry_px"] = entry_px
-                watching["sl_px"] = sl_px
-                watching["tp_px"] = tp_px
-                watching["last_eval_t"] = cur_t
-                watching["spike_mult"] = vol_mult
-                log(f"[{base}] 🔄 UPDATED GREEN CANDLE FIB LEVELS ({ENTRY_FIB_LEVEL} Entry / {SL_FIB_LEVEL} SL): Entry={entry_px}, SL={sl_px}, TP={tp_px}")
-                return watching, "WATCH_UPDATED"
-        else:
-            # Red candle closed -> stop watching this coin!
-            log(f"[{base}] 🛑 RED CANDLE CLOSED ({cur_c:.6f} < {cur_o:.6f}). Cancelling watch loop.")
-            return None, "WATCH_CANCELLED"
+        # Keep watching the original fixed levels (aligns 100% with profitable backtest)
+        watching["last_eval_t"] = cur_t
+        return watching, "WATCHING_CONTINUE"
             
     # Check for NEW 30x volume spike trigger
     if is_green and vol_mult >= SPIKE_VOL_MULT:
