@@ -13,6 +13,13 @@ export default function Dashboard() {
   const [tj, setTj] = useState<Awaited<ReturnType<typeof api.myTradejini>> | null>(null);
   const [cdcx, setCdcx] = useState<Awaited<ReturnType<typeof api.coindcxStatus>> | null>(null);
   const [notice, setNotice] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  }
 
   async function load() {
     try {
@@ -98,9 +105,19 @@ export default function Dashboard() {
                   <span className="font-mono text-gold-400 font-semibold">{me?.client_id || "Not set"}</span>) have been received.
                   An administrator is reviewing your request. Once approved, your trade automation features will unlock automatically.
                 </p>
-                <div className="inline-flex items-center gap-2 rounded-full border border-gold-500/30 bg-gold-500/10 px-4 py-1.5 text-xs text-gold-400 font-medium">
-                  <span className="h-2 w-2 rounded-full bg-gold-400 animate-pulse" />
-                  Status: Pending Admin Approval
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-gold-500/30 bg-gold-500/10 px-4 py-2 text-xs text-gold-400 font-medium">
+                    <span className="h-2 w-2 rounded-full bg-gold-400 animate-pulse" />
+                    Status: Pending Admin Approval
+                  </div>
+                  <button
+                    onClick={handleRefresh}
+                    disabled={refreshing}
+                    className="btn-gold text-xs px-5 py-2 inline-flex items-center gap-2 font-semibold shadow-lg shadow-gold-500/10"
+                  >
+                    <span className={refreshing ? "animate-spin" : ""}>🔄</span>
+                    {refreshing ? "Checking Status…" : "Refresh Approval Status"}
+                  </button>
                 </div>
               </div>
             )}
