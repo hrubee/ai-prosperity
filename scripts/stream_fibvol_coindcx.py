@@ -270,7 +270,7 @@ def get_account2_qty(base, entry_px, sl_px):
         return 0.0
     try:
         free_inr_2 = A2.get_free_inr_balance()
-        if free_inr_2 <= 0:
+        if free_inr_2 < 612.0:
             return 0.0
         usdt_rate = getattr(A2, "inr_per_usdt", 86.0) or 86.0
         w_usdt_2 = free_inr_2 / usdt_rate
