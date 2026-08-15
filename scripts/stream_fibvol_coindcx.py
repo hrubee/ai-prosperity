@@ -40,7 +40,7 @@ TRAIL_DIST_R = float(os.environ.get("FIBVOL_TRAIL_DIST_R", "1.0")) # Trail 1.0R 
 RISK_FRAC = float(os.environ.get("FIBVOL_RISK_FRAC", "0.01"))  # 1% risk per trade
 LEVERAGE = int(os.environ.get("FIBVOL_LEVERAGE", "10"))
 MAX_CONCURRENT = int(os.environ.get("FIBVOL_MAX_CONCURRENT", "5"))
-POLL_INTERVAL = float(os.environ.get("FIBVOL_POLL", "0.5"))  # 500ms ultra-fast position & trailing SL loop
+POLL_INTERVAL = float(os.environ.get("FIBVOL_POLL", "0.1"))  # 100ms ultra-fast 10Hz position & trailing SL loop
 
 ARMED = os.environ.get("LIVE_ARMED", "0") == "1"
 START_BAL_INR = float(os.environ.get("FIBVOL_START_BAL_INR", "16000"))
