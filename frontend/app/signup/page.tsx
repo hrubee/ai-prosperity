@@ -166,7 +166,15 @@ export default function SignupPage() {
         </div>
 
         <p className="mt-5 text-center text-xs text-muted">
-          By continuing you agree to our Terms &amp; Risk Disclosure.
+          By continuing you agree to our{" "}
+          <Link href="/terms" className="text-gold-400 hover:underline">
+            Terms &amp; Risk Disclosure
+          </Link>{" "}
+          and{" "}
+          <Link href="/privacy" className="text-gold-400 hover:underline">
+            Privacy Policy
+          </Link>
+          .
         </p>
       </div>
     </main>
