@@ -629,10 +629,13 @@ def main():
                     if qty <= 0:
                         continue
                         
-                    # Calculate Dynamic Isolated Leverage to align Exchange Liquidation Price at Stop Loss level
+                    # Fetch per-coin max leverage directly from CoinDCX instrument spec for exact coin-by-coin clamping
+                    inst = A.instrument(base) if hasattr(A, "instrument") else {}
+                    coin_max_lev = int(float(inst.get("max_leverage_long") or LEVERAGE))
+                    
                     sl_dist_pct = (entry_px - sl_px) / entry_px if entry_px > 0 else 0.10
-                    dyn_lev = int(1.0 / max(sl_dist_pct, 0.033)) if sl_dist_pct > 0 else LEVERAGE
-                    dyn_lev = max(1, min(dyn_lev, 30))
+                    target_lev = int(1.0 / max(sl_dist_pct, 0.01)) if sl_dist_pct > 0 else LEVERAGE
+                    dyn_lev = max(1, min(target_lev, coin_max_lev))
 
                     pos_id = None
                     if ARMED:
