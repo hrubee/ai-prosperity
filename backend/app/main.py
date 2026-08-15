@@ -403,7 +403,7 @@ def my_tradejini(user: User = Depends(auth.current_user), db: Session = Depends(
     equity = 0.0
     positions: list = []
     err = None
-    if connected_once and not conn.paused:
+    if connected_once:
         try:
             # auto-mint a fresh token if the current one lapsed — client never re-auths.
             tok = tradejini_auth.ensure_client_token(db, conn)
@@ -947,15 +947,26 @@ def admin_delete_client(user_id: str, _: User = Depends(auth.require_admin), db:
     if u is None:
         raise HTTPException(status_code=404, detail="client not found")
     
-    # Delete related rows
-    db.query(TradejiniConnection).filter(TradejiniConnection.user_id == user_id).delete()
-    db.query(DeltaConnection).filter(DeltaConnection.user_id == user_id).delete()
-    db.query(Subscription).filter(Subscription.user_id == user_id).delete()
-    db.query(ClientOrder).filter(ClientOrder.user_id == user_id).delete()
-    db.query(PaymentScreenshot).filter(PaymentScreenshot.user_id == user_id).delete()
+    email = u.email
+    # Delete related rows across all tables (including straddle_positions, counters, connections)
+    for table_name in [
+        "straddle_positions",
+        "tradejini_connections",
+        "delta_connections",
+        "coindcx_connections",
+        "subscriptions",
+        "client_orders",
+        "payment_screenshots",
+        "entitlement_counters",
+    ]:
+        try:
+            db.execute(text(f"DELETE FROM {table_name} WHERE user_id = :uid"), {"uid": user_id})
+        except Exception:
+            pass
+            
     db.delete(u)
     db.commit()
-    return {"result": f"Client {u.email} permanently deleted"}
+    return {"result": f"Client {email} permanently deleted"}
 
 
 class RecordProfitLedgerRequest(BaseModel):

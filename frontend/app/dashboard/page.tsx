@@ -199,14 +199,26 @@ function TradejiniPanel({ tj, onReload }: { tj: TjState; onReload: () => Promise
     <div className={`card p-5 ${tj.error ? "border-loss/60" : ""}`}>
       <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
         <div className="flex items-center gap-3">
-          <span className={`h-3 w-3 rounded-full ${tj.connected ? "bg-gain" : "bg-loss"}`} />
+          <span className={`h-3 w-3 rounded-full ${tj.connected ? (tj.paused ? "bg-gold-400" : "bg-gain") : "bg-loss"}`} />
           <div>
-            <p className="font-semibold text-white">
-              {tj.connected ? "Tradejini Connected — Indian F&O Live" : "Tradejini Auto-Renewing…"}
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="font-semibold text-white">
+                {tj.connected
+                  ? tj.paused
+                    ? "Tradejini Connected — Trading Paused"
+                    : "Tradejini Connected — Indian F&O Live"
+                  : "Tradejini Auto-Renewing…"}
+              </p>
+              {tj.paused && (
+                <span className="pill text-xs border-gold-500/40 bg-gold-500/10 text-gold-400 font-semibold">
+                  Paused
+                </span>
+              )}
+            </div>
             <p className="text-sm text-muted mt-0.5">
+              Available Equity: <b className="text-white">₹{tj.equity_inr ? tj.equity_inr.toLocaleString("en-IN", { maximumFractionDigits: 2 }) : "0.00"}</b>
               {tj.expires_at
-                ? `Session ends ${new Date(tj.expires_at).toLocaleTimeString([], {
+                ? ` · Session active till ${new Date(tj.expires_at).toLocaleTimeString([], {
                     hour: "2-digit",
                     minute: "2-digit",
                   })}`
