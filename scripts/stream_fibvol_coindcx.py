@@ -637,6 +637,9 @@ def main():
                             log(f"[{base}] 🔴 LIVE LIMIT BRACKET ORDER PLACED ON COINDCX (Acc 1): Limit Px={entry_px:.6f}, ID={pos_id}")
                         except Exception as e:
                             log(f"[{base}] Live limit order execution error (Acc 1): {e}")
+                            if base in state["watching"]:
+                                del state["watching"][base]
+                                save_state(state)
                             continue
 
                         if A2:
