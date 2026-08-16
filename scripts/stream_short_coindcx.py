@@ -96,12 +96,13 @@ def get_wallet_usdt(state):
     if ARMED:
         try:
             inr = A.get_free_inr_balance()
-            rate = getattr(A, "inr_per_usdt", 88.5) or 88.5
+            rate = getattr(A, "inr_per_usdt", 102.0) or 102.0
             return inr / rate
         except Exception:
             pass
     inr = state.get("_bal_inr", START_BAL_INR)
-    return inr / 88.5
+    rate = getattr(A, "inr_per_usdt", 102.0) or 102.0
+    return inr / rate
 
 def calculate_position_size(base, entry_px, sl_px, wallet_usdt, adapter=A):
     risk_usdt = wallet_usdt * RISK_FRAC
@@ -136,14 +137,18 @@ def fetch_coin_klines(base):
         return None
 
 def fetch_all_klines(coins):
+    from concurrent.futures import as_completed
     data = {}
     with ThreadPoolExecutor(max_workers=50) as ex:
         futures = {ex.submit(fetch_coin_klines, coin): coin for coin in coins}
-        for fut in futures:
+        for fut in as_completed(futures):
             coin = futures[fut]
-            res = fut.result()
-            if res:
-                data[coin] = res
+            try:
+                res = fut.result()
+                if res:
+                    data[coin] = res
+            except Exception:
+                pass
     return data
 
 # ── Strategy Evaluation ───────────────────────────────────────────────────────
@@ -165,8 +170,9 @@ def evaluate_short_signal(base, klines_tuple, now_ms, state):
     is_red = cur_c < cur_o
     is_green = cur_c >= cur_o
     
-    # Stale data protection: ensure 4h close is within 1.5 periods (6 hours)
-    if now_ms - (cur_t + TF_MS) >= TF_MS * 1.5:
+    # Stale data protection: ensure last closed 4h bar is within 2 periods (8h)
+    # Scan latency can be 40-70s, so we give 2x buffer (not 1.5x which was too tight)
+    if now_ms - (cur_t + TF_MS) >= TF_MS * 2:
         return None, "STALE_DATA"
         
     # Calculate volume MA (excluding spike candle)
@@ -211,7 +217,11 @@ def evaluate_short_signal(base, klines_tuple, now_ms, state):
                 watching["entry_px"] = entry_px
                 watching["sl_px"] = sl_px
                 # TP at 70% retracement: Peak - 0.70 * (Peak - Start)
-                watching["tp_px"] = sl_px - 0.70 * (sl_px - watching["pump_start_px"])
+                calc_tp = sl_px - 0.70 * (sl_px - watching["pump_start_px"])
+                # For Short, TP must be strictly below Entry
+                if calc_tp >= entry_px * 0.998:
+                    calc_tp = entry_px - 2.0 * (sl_px - entry_px) # Fallback to 1:2 RR below entry
+                watching["tp_px"] = calc_tp
                 return watching, "TRIGGER_SHORT"
             else:
                 log(f"[{base}] ⚠️ Red close below EMA, but risk too narrow. Cancelling watch.")
@@ -259,17 +269,24 @@ def main():
     state.setdefault("last_spikes", {})
     
     last_scan_t = 0
+    last_universe_t = 0
+    universe = []
     klines_map = {}
     
     while True:
         try:
             now_ms = int(time.time() * 1000)
             now_sec = time.time()
-            
-            universe = sorted(list(A.active_bases() or []))
-            if not universe:
-                time.sleep(5)
-                continue
+
+            # Refresh universe every 5 minutes (not every 1s tick)
+            if now_sec - last_universe_t >= 300 or not universe:
+                fresh = sorted(list(A.active_bases() or []))
+                if fresh:
+                    universe = fresh
+                    last_universe_t = now_sec
+                elif not universe:
+                    time.sleep(5)
+                    continue
                 
             # Scan universe on scan interval
             if now_sec - last_scan_t >= SCAN_INTERVAL:
@@ -306,7 +323,7 @@ def main():
                     exec_px, exec_qty, exec_fees = A.fetch_executed_trade_vwap(base, side="buy")
                     exit_px = exec_px if exec_px > 0 else cur_price
                     pnl_usdt = (pos["entry_px"] - exit_px) * pos["qty"] - exec_fees
-                    state["_bal_inr"] += pnl_usdt * 88.5
+                    state["_bal_inr"] += pnl_usdt * getattr(A, "inr_per_usdt", 102.0)
                     log(f"[{base}] 🏦 SHORT POSITION CLOSED ON EXCHANGE @ REAL VWAP {exit_px:.6f}! PnL: ${pnl_usdt:+.2f}")
                     del state["positions"][base]
                     save_state(state)
@@ -321,7 +338,7 @@ def main():
                             pass
                     exit_px = cur_price
                     pnl_usdt = (pos["entry_px"] - exit_px) * pos["qty"]
-                    state["_bal_inr"] += pnl_usdt * 88.5
+                    state["_bal_inr"] += pnl_usdt * getattr(A, "inr_per_usdt", 102.0)
                     log(f"[{base}] 🔴 SHORT STOP LOSS HIT @ {exit_px:.6f}! PnL: ${pnl_usdt:+.2f}")
                     del state["positions"][base]
                     save_state(state)
@@ -336,7 +353,7 @@ def main():
                             pass
                     exit_px = cur_price
                     pnl_usdt = (pos["entry_px"] - exit_px) * pos["qty"]
-                    state["_bal_inr"] += pnl_usdt * 88.5
+                    state["_bal_inr"] += pnl_usdt * getattr(A, "inr_per_usdt", 102.0)
                     log(f"[{base}] 🎯 SHORT TAKE PROFIT HIT @ {exit_px:.6f}! PnL: ${pnl_usdt:+.2f}")
                     del state["positions"][base]
                     save_state(state)
@@ -347,6 +364,13 @@ def main():
                 if base in state.get("positions", {}):
                     continue
                 if base not in klines_map:
+                    # If we're watching a coin but can't fetch its klines, clean up after 2 scan cycles
+                    if base in state.get("watching", {}):
+                        w = state["watching"][base]
+                        if now_ms - w.get("last_eval_t", now_ms) > TF_MS * 2:
+                            log(f"[{base}] 🧹 Stale watch (no klines). Removing.")
+                            del state["watching"][base]
+                            save_state(state)
                     continue
                     
                 signal_info, code = evaluate_short_signal(base, klines_map[base], now_ms, state)
