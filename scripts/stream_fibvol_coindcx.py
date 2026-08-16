@@ -747,9 +747,9 @@ def main():
                 
                 # Limit order trigger: current price retraces down to or below Fib entry price!
                 if cur_price <= entry_px:
-                    # Slippage Guard: if price has already crashed to or below SL (or within 0.2% of it), skip the trade
-                    if cur_price <= sl_px * 1.002:
-                        log(f"[{base}] ⚠️ Price {cur_price:.6f} is below or too close to SL {sl_px:.6f} (slippage guard). Skipping trade.")
+                    # Slippage Guard: if price has already crashed to or below SL, skip the trade
+                    if cur_price <= sl_px:
+                        log(f"[{base}] ⚠️ Price {cur_price:.6f} has already crashed below SL {sl_px:.6f} (slippage guard). Skipping trade.")
                         del state["watching"][base]
                         save_state(state)
                         continue
