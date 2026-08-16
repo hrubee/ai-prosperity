@@ -1,0 +1,23 @@
+[Unit]
+Description=CoinDCX 4H Mean Reversion Exhaustion Short Strategy Live Executor
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/trading-bot/crypto
+Environment=LIVE_ARMED=1
+Environment=MR_SPIKE_VOL=10.0
+Environment=MR_TF=4h
+Environment=MR_EMA_PERIOD=9
+Environment=MR_RISK_FRAC=0.01
+Environment=MR_LEVERAGE=10
+Environment=MR_MAX_CONCURRENT=5
+Environment=MR_START_BAL_INR=16000
+Environment=MR_OUT=/root/short_coindcx
+ExecStart=/root/trading-bot/crypto/.venv/bin/python /root/trading-bot/crypto/shared_scripts/stream_short_coindcx.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

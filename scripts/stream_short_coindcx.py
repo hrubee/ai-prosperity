@@ -19,18 +19,32 @@ import datetime
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
-# Add adapter path to sys.path
+# Add paths to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from platforms.coindcx.adapter import CoinDCXAdapter, CoinDCXError
-from shared_scripts.b2_telegram import notify_telegram, post_entry_chart, post_exit_chart
+try:
+    from dotenv import load_dotenv
+    for env_p in ["/root/go-trader/.env", "/root/trading-bot/crypto/.env", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")]:
+        if os.path.exists(env_p):
+            load_dotenv(env_p)
+            break
+except ImportError:
+    pass
+
+from platforms.coindcx.adapter import CoinDCXExchangeAdapter as CoinDCXAdapter, CoinDCXError
+try:
+    from shared_scripts.b2_telegram import notify_telegram, post_entry_chart, post_exit_chart
+except ImportError:
+    def notify_telegram(msg): pass
+    def post_entry_chart(*args, **kwargs): pass
+    def post_exit_chart(*args, **kwargs): pass
 
 # ── Environment & Config ──────────────────────────────────────────────────────
-TF = "4h"
-TF_SEC = 4 * 60 * 60
+TF = os.environ.get("MR_TF", "4h")
+TF_SEC = {"1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "4h": 14400}.get(TF, 14400)
 TF_MS = TF_SEC * 1000
 
 SPIKE_VOL_MULT = float(os.environ.get("MR_SPIKE_VOL", "10.0"))
-EMA_PERIOD = 9
+EMA_PERIOD = int(os.environ.get("MR_EMA_PERIOD", "9"))
 RISK_FRAC = float(os.environ.get("MR_RISK_FRAC", "0.01"))  # 1% risk per trade
 LEVERAGE = int(os.environ.get("MR_LEVERAGE", "10"))
 MAX_CONCURRENT = int(os.environ.get("MR_MAX_CONCURRENT", "5"))
@@ -38,20 +52,22 @@ POLL_INTERVAL = float(os.environ.get("MR_POLL", "1.0"))  # 1s positions loop
 
 ARMED = os.environ.get("LIVE_ARMED", "0") == "1"
 START_BAL_INR = float(os.environ.get("MR_START_BAL_INR", "16000"))
-STATE_FILE = os.path.expanduser("~/mr_coindcx_state.json")
+OUT_DIR = os.environ.get("MR_OUT", os.path.expanduser("~/short_coindcx"))
+os.makedirs(OUT_DIR, exist_ok=True)
+STATE_FILE = os.path.join(OUT_DIR, "state.json")
 ACCOUNT_NAME = "CoinDCX Acc 1 (Shorting)"
 
 # Initialize CoinDCX Adapters
-key1 = os.environ.get("COINDCX_API_KEY")
-sec1 = os.environ.get("COINDCX_SECRET")
-A = CoinDCXAdapter(api_key=key1, secret=sec1) if key1 and sec1 else None
+key1 = os.environ.get("COINDCX_LIVE_API_KEY") or os.environ.get("COINDCX_API_KEY")
+sec1 = os.environ.get("COINDCX_LIVE_API_SECRET") or os.environ.get("COINDCX_SECRET")
+A = CoinDCXAdapter(key=key1, secret=sec1) if key1 and sec1 else None
 
-key2 = os.environ.get("COINDCX_API_KEY_2")
+key2 = os.environ.get("COINDCX_KEY_2") or os.environ.get("COINDCX_API_KEY_2")
 sec2 = os.environ.get("COINDCX_SECRET_2")
-A2 = CoinDCXAdapter(api_key=key2, secret=sec2) if key2 and sec2 else None
+A2 = CoinDCXAdapter(key=key2, secret=sec2) if key2 and sec2 else None
 
 if not A:
-    print("ERROR: COINDCX_API_KEY and COINDCX_SECRET must be set in environment.")
+    print("ERROR: COINDCX_LIVE_API_KEY and COINDCX_LIVE_API_SECRET must be set in environment.")
     sys.exit(1)
 
 # ── State Management ──────────────────────────────────────────────────────────
@@ -364,10 +380,14 @@ def main():
                     pos_id = None
                     if ARMED:
                         try:
+                            # Clamp leverage to coin's max allowed
+                            instr = A.instrument(base) or {}
+                            max_lev = int(instr.get("max_leverage_short") or instr.get("max_leverage_long") or LEVERAGE)
+                            order_lev = min(LEVERAGE, max_lev)
                             # Short bracket order: is_buy = False
-                            res = A.limit_open_bracket(base, is_buy=False, qty=qty, price=entry_px, leverage=LEVERAGE, sl_price=sl_px, tp_price=tp_px)
+                            res = A.limit_open_bracket(base, is_buy=False, qty=qty, price=entry_px, leverage=order_lev, sl_price=sl_px, tp_price=tp_px)
                             pos_id = res.get("id") or res.get("position_id")
-                            log(f"[{base}] 🔴 LIVE SHORT BRACKET ORDER PLACED ON EXCHANGE! ID: {pos_id}")
+                            log(f"[{base}] 🔴 LIVE SHORT BRACKET ORDER PLACED ON EXCHANGE! ID: {pos_id} (Lev={order_lev}x)")
                         except Exception as e:
                             log(f"[{base}] Live Short execution error: {e}")
                             del state["watching"][base]
