@@ -345,70 +345,132 @@ def evaluate_fibvol_signal(base, klines_tuple, now_ms, state):
             # Same candle, no change
             return watching, "WATCHING_CURRENT"
             
+        status = watching.get("status", "ARMED")
+        
         # New candle closed while watching!
-        if is_green:
-            # Re-plot Fibonacci levels on new green candle!
-            rng = cur_h - cur_l
-            if rng > 0:
-                entry_px = A._round_px(base, cur_h - (ENTRY_FIB_LEVEL * rng))
-                sl_px = A._round_px(base, cur_h - (SL_FIB_LEVEL * rng))
-                
-                # Risk distance too small / rounding safety check
-                inc = float(A.instrument(base).get("price_increment") or 0.0) if hasattr(A, "instrument") else 0.0
-                min_risk = max(3 * inc, entry_px * 0.001, 1e-8)
-                
-                if (entry_px - sl_px) >= min_risk:
-                    risk = entry_px - sl_px
-                    tp_px = A._round_px(base, entry_px + (RR_RATIO * risk))
+        if status == "WAITING_2ND_GREEN":
+            if is_green:
+                # 2nd consecutive green candle has closed! Calculate Fib levels across the 2-candle move and arm!
+                tot_high = max(watching.get("high", cur_h), cur_h)
+                tot_low = min(watching.get("low", cur_l), cur_l)
+                rng = tot_high - tot_low
+                if rng > 0:
+                    entry_px = A._round_px(base, tot_high - (ENTRY_FIB_LEVEL * rng))
+                    sl_px = A._round_px(base, tot_high - (SL_FIB_LEVEL * rng))
                     
-                    watching["entry_px"] = entry_px
-                    watching["sl_px"] = sl_px
-                    watching["tp_px"] = tp_px
-                    watching["last_eval_t"] = cur_t
-                    watching["spike_mult"] = vol_mult
-                    log(f"[{base}] 🔄 UPDATED GREEN CANDLE FIB LEVELS ({ENTRY_FIB_LEVEL} Entry / {SL_FIB_LEVEL} SL): Entry={entry_px}, SL={sl_px}, TP={tp_px}")
-                    return watching, "WATCH_UPDATED"
+                    inc = float(A.instrument(base).get("price_increment") or 0.0) if hasattr(A, "instrument") else 0.0
+                    min_risk = max(3 * inc, entry_px * 0.001, 1e-8)
+                    if (entry_px - sl_px) >= min_risk:
+                        risk = entry_px - sl_px
+                        tp_px = A._round_px(base, entry_px + (RR_RATIO * risk))
+                        
+                        watching["status"] = "ARMED"
+                        watching["high"] = tot_high
+                        watching["low"] = tot_low
+                        watching["entry_px"] = entry_px
+                        watching["sl_px"] = sl_px
+                        watching["tp_px"] = tp_px
+                        watching["last_eval_t"] = cur_t
+                        log(f"[{base}] ⚡ 2ND CONSECUTIVE GREEN CANDLE CLOSED ({cur_c:.6f} >= {cur_o:.6f})! Limit Order Armed @ Fib {ENTRY_FIB_LEVEL} Entry={entry_px}, SL={sl_px}, TP={tp_px}")
+                        return watching, "ARMED_2ND_GREEN"
+                    else:
+                        log(f"[{base}] ⚠️ 2nd green candle move too narrow (risk {entry_px-sl_px:.6f} < min {min_risk:.6f}). Cancelling watch.")
+                        return None, "WATCH_CANCELLED"
                 else:
-                    # Ignore range updates if the new range is too narrow to avoid risk contraction
-                    watching["last_eval_t"] = cur_t
-                    log(f"[{base}] ⚠️ New green candle range too narrow (risk {entry_px-sl_px:.6f} < min {min_risk:.6f}). Retaining previous levels.")
-                    return watching, "WATCHING_CONTINUE"
+                    return None, "WATCH_CANCELLED"
+            else:
+                # 2nd candle closed RED -> 2 consecutive green candle filter failed!
+                log(f"[{base}] 🛑 2ND CANDLE CLOSED RED ({cur_c:.6f} < {cur_o:.6f}). 2-Green-Candle confirmation failed. Cancelling watch.")
+                return None, "WATCH_CANCELLED"
         else:
-            # Red candle closed -> stop watching this coin!
-            log(f"[{base}] 🛑 RED CANDLE CLOSED ({cur_c:.6f} < {cur_o:.6f}). Cancelling watch loop.")
-            return None, "WATCH_CANCELLED"
+            # Already ARMED and waiting for limit order fill
+            if is_green:
+                # Subsequent candle continues green -> Re-plot Fibonacci levels on higher high!
+                tot_high = max(watching.get("high", cur_h), cur_h)
+                tot_low = watching.get("low", cur_l)
+                rng = tot_high - tot_low
+                if rng > 0:
+                    entry_px = A._round_px(base, tot_high - (ENTRY_FIB_LEVEL * rng))
+                    sl_px = A._round_px(base, tot_high - (SL_FIB_LEVEL * rng))
+                    
+                    inc = float(A.instrument(base).get("price_increment") or 0.0) if hasattr(A, "instrument") else 0.0
+                    min_risk = max(3 * inc, entry_px * 0.001, 1e-8)
+                    
+                    if (entry_px - sl_px) >= min_risk:
+                        risk = entry_px - sl_px
+                        tp_px = A._round_px(base, entry_px + (RR_RATIO * risk))
+                        
+                        watching["high"] = tot_high
+                        watching["entry_px"] = entry_px
+                        watching["sl_px"] = sl_px
+                        watching["tp_px"] = tp_px
+                        watching["last_eval_t"] = cur_t
+                        watching["spike_mult"] = vol_mult
+                        log(f"[{base}] 🔄 UPDATED GREEN CANDLE FIB LEVELS ({ENTRY_FIB_LEVEL} Entry / {SL_FIB_LEVEL} SL): Entry={entry_px}, SL={sl_px}, TP={tp_px}")
+                        return watching, "WATCH_UPDATED"
+                    else:
+                        watching["last_eval_t"] = cur_t
+                        log(f"[{base}] ⚠️ New green candle range too narrow. Retaining previous levels.")
+                        return watching, "WATCHING_CONTINUE"
+            else:
+                # Red candle closed -> stop watching this coin!
+                log(f"[{base}] 🛑 RED CANDLE CLOSED ({cur_c:.6f} < {cur_o:.6f}). Cancelling watch loop.")
+                return None, "WATCH_CANCELLED"
             
     # Check for NEW 30x volume spike trigger
     if is_green and vol_mult >= SPIKE_VOL_MULT:
         last_spike_t = state.get("last_spikes", {}).get(base, 0)
         if cur_t > last_spike_t:
-            rng = cur_h - cur_l
-            if rng > 0:
-                entry_px = A._round_px(base, cur_h - (ENTRY_FIB_LEVEL * rng))
-                sl_px = A._round_px(base, cur_h - (SL_FIB_LEVEL * rng))
-                
-                # Risk distance too small / rounding safety check
-                inc = float(A.instrument(base).get("price_increment") or 0.0) if hasattr(A, "instrument") else 0.0
-                min_risk = max(3 * inc, entry_px * 0.001, 1e-8)
-                if (entry_px - sl_px) < min_risk:
-                    return None, "RISK_DISTANCE_TOO_SMALL"
+            # Check if previous candle was also green
+            prev_is_green = (closes[ci - 1] >= opens[ci - 1]) if ci >= 1 else False
+            
+            if prev_is_green:
+                # Both previous candle and spike candle are GREEN -> 2 consecutive green candles confirmed!
+                tot_high = max(highs[ci - 1], cur_h)
+                tot_low = min(lows[ci - 1], cur_l)
+                rng = tot_high - tot_low
+                if rng > 0:
+                    entry_px = A._round_px(base, tot_high - (ENTRY_FIB_LEVEL * rng))
+                    sl_px = A._round_px(base, tot_high - (SL_FIB_LEVEL * rng))
                     
-                risk = entry_px - sl_px
-                tp_px = A._round_px(base, entry_px + (RR_RATIO * risk))
-                
+                    inc = float(A.instrument(base).get("price_increment") or 0.0) if hasattr(A, "instrument") else 0.0
+                    min_risk = max(3 * inc, entry_px * 0.001, 1e-8)
+                    if (entry_px - sl_px) < min_risk:
+                        return None, "RISK_DISTANCE_TOO_SMALL"
+                        
+                    risk = entry_px - sl_px
+                    tp_px = A._round_px(base, entry_px + (RR_RATIO * risk))
+                    
+                    signal_info = {
+                        "symbol": base,
+                        "status": "ARMED",
+                        "spike_t": cur_t,
+                        "last_eval_t": cur_t,
+                        "spike_mult": vol_mult,
+                        "high": tot_high,
+                        "low": tot_low,
+                        "entry_px": entry_px,
+                        "sl_px": sl_px,
+                        "tp_px": tp_px
+                    }
+                    log(f"[{base}] 🚀 {SPIKE_VOL_MULT:.0f}X VOLUME SPIKE + 2 CONSECUTIVE GREEN CANDLES CONFIRMED ({vol_mult:.1f}x)! Limit Order Armed @ Fib {ENTRY_FIB_LEVEL} Entry={entry_px}, SL={sl_px}, TP={tp_px}")
+                    return signal_info, "NEW_SPIKE_ARMED"
+            else:
+                # Spike is Green Candle 1 (prior candle was red). Set to WAITING_2ND_GREEN!
                 signal_info = {
                     "symbol": base,
+                    "status": "WAITING_2ND_GREEN",
                     "spike_t": cur_t,
                     "last_eval_t": cur_t,
                     "spike_mult": vol_mult,
                     "high": cur_h,
                     "low": cur_l,
-                    "entry_px": entry_px,
-                    "sl_px": sl_px,
-                    "tp_px": tp_px
+                    "entry_px": 0.0,
+                    "sl_px": 0.0,
+                    "tp_px": 0.0
                 }
-                log(f"[{base}] 🚀 {SPIKE_VOL_MULT:.0f}X VOLUME SPIKE DETECTED ({vol_mult:.1f}x)! Fib {ENTRY_FIB_LEVEL} Entry={entry_px}, SL={sl_px}, TP={tp_px}")
-                return signal_info, "NEW_SPIKE"
+                log(f"[{base}] ⏳ {SPIKE_VOL_MULT:.0f}X VOLUME SPIKE DETECTED ({vol_mult:.1f}x) on Green Candle 1. Waiting for 2nd consecutive green candle to close before arming limit order.")
+                return signal_info, "NEW_SPIKE_WAITING"
                 
     return None, "NO_SIGNAL"
 
@@ -601,11 +663,22 @@ def main():
                     
                 signal_info, code = evaluate_fibvol_signal(base, klines_map[base], now_ms, state)
                 
-                if code == "NEW_SPIKE":
+                if code == "NEW_SPIKE_ARMED":
                     state["watching"][base] = signal_info
                     state["last_spikes"][base] = signal_info["spike_t"]
                     save_state(state)
-                    notify_telegram(f"⚡ [{ACCOUNT_NAME}] {base} 30X Volume Spike ({signal_info['spike_mult']:.1f}x)! Watching Fib 0.6 Entry={signal_info['entry_px']}")
+                    notify_telegram(f"🚀 [{ACCOUNT_NAME}] {base} 30X Volume Spike ({signal_info['spike_mult']:.1f}x) + 2 Green Candles Confirmed! Limit Order Armed @ Fib {ENTRY_FIB_LEVEL} Entry={signal_info['entry_px']}")
+                    
+                elif code == "NEW_SPIKE_WAITING":
+                    state["watching"][base] = signal_info
+                    state["last_spikes"][base] = signal_info["spike_t"]
+                    save_state(state)
+                    notify_telegram(f"⏳ [{ACCOUNT_NAME}] {base} 30X Volume Spike ({signal_info['spike_mult']:.1f}x) on Green Candle 1! Waiting for 2nd green candle to close before arming limit orders.")
+                    
+                elif code == "ARMED_2ND_GREEN":
+                    state["watching"][base] = signal_info
+                    save_state(state)
+                    notify_telegram(f"⚡ [{ACCOUNT_NAME}] {base} 2nd Green Candle Confirmed! Limit Order Armed @ Fib {ENTRY_FIB_LEVEL} Entry={signal_info['entry_px']}, SL={signal_info['sl_px']}, TP={signal_info['tp_px']}")
                     
                 elif code == "WATCH_CANCELLED":
                     if base in state["watching"]:
@@ -622,6 +695,10 @@ def main():
                     del state["watching"][base]
                     continue
                     
+                # ONLY execute limit order entries if 2 consecutive green candles are confirmed (status == ARMED)
+                if watch.get("status") != "ARMED":
+                    continue
+                    
                 if len(state.get("positions", {})) >= MAX_CONCURRENT:
                     log(f"[{base}] ⚠️ MAX_CONCURRENT positions ({MAX_CONCURRENT}) reached. Skipping entry.")
                     break
@@ -634,7 +711,7 @@ def main():
                 sl_px = watch["sl_px"]
                 tp_px = watch["tp_px"]
                 
-                # Limit order trigger: current price retraces down to or below 0.5 Fib entry price!
+                # Limit order trigger: current price retraces down to or below Fib entry price!
                 if cur_price <= entry_px:
                     # Slippage Guard: if price has already crashed to or below SL (or within 0.2% of it), skip the trade
                     if cur_price <= sl_px * 1.002:
