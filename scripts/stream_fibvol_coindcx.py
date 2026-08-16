@@ -34,8 +34,11 @@ SL_FIB_LEVEL = float(os.environ.get("FIBVOL_SL_FIB", "0.700"))
 RR_RATIO = float(os.environ.get("FIBVOL_RR_RATIO", "5.0"))
 
 TRAIL_ENABLE = os.environ.get("FIBVOL_TRAIL_ENABLE", "1") == "1"
-TRAIL_ACT_R = float(os.environ.get("FIBVOL_TRAIL_ACT_R", "2.0"))  # Activate trailing SL at +2.0R profit
-TRAIL_DIST_R = float(os.environ.get("FIBVOL_TRAIL_DIST_R", "2.0")) # Trail 2.0R behind peak high
+TRAIL_MODE = os.environ.get("FIBVOL_TRAIL_MODE", "atr_activated")  # "atr_activated" or "fixed_r"
+TRAIL_ATR_ACT = float(os.environ.get("FIBVOL_TRAIL_ATR_ACT", "1.5"))   # Activate trailing SL at +1.5 * ATR profit
+TRAIL_ATR_DIST = float(os.environ.get("FIBVOL_TRAIL_ATR_DIST", "1.0")) # Trail 1.0 * ATR behind peak high
+TRAIL_ACT_R = float(os.environ.get("FIBVOL_TRAIL_ACT_R", "2.0"))       # Fallback fixed R activation
+TRAIL_DIST_R = float(os.environ.get("FIBVOL_TRAIL_DIST_R", "2.0"))      # Fallback fixed R trailing distance
 
 RISK_FRAC = float(os.environ.get("FIBVOL_RISK_FRAC", "0.01"))  # 1% risk per trade
 LEVERAGE = int(os.environ.get("FIBVOL_LEVERAGE", "10"))
@@ -336,6 +339,16 @@ def evaluate_fibvol_signal(base, klines_tuple, now_ms, state):
         
     vol_mult = cur_v / avg_vol
     
+    # Calculate 14-period 15m True Range and ATR
+    tr_list = []
+    for i in range(max(0, ci - 14), ci + 1):
+        if i == 0:
+            tr = highs[i] - lows[i]
+        else:
+            tr = max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
+        tr_list.append(tr)
+    cur_atr = float(np.mean(tr_list)) if tr_list else float(cur_h - cur_l)
+    
     # Check watching state for this coin
     watching = state.get("watching", {}).get(base)
     
@@ -370,8 +383,9 @@ def evaluate_fibvol_signal(base, klines_tuple, now_ms, state):
                         watching["entry_px"] = entry_px
                         watching["sl_px"] = sl_px
                         watching["tp_px"] = tp_px
+                        watching["atr"] = cur_atr
                         watching["last_eval_t"] = cur_t
-                        log(f"[{base}] ⚡ 2ND CONSECUTIVE GREEN CANDLE CLOSED ({cur_c:.6f} >= {cur_o:.6f})! Limit Order Armed @ Fib {ENTRY_FIB_LEVEL} Entry={entry_px}, SL={sl_px}, TP={tp_px}")
+                        log(f"[{base}] ⚡ 2ND CONSECUTIVE GREEN CANDLE CLOSED ({cur_c:.6f} >= {cur_o:.6f})! Limit Order Armed @ Fib {ENTRY_FIB_LEVEL} Entry={entry_px}, SL={sl_px}, TP={tp_px}, ATR(14)={cur_atr:.6f}")
                         return watching, "ARMED_2ND_GREEN"
                     else:
                         log(f"[{base}] ⚠️ 2nd green candle move too narrow (risk {entry_px-sl_px:.6f} < min {min_risk:.6f}). Cancelling watch.")
@@ -404,9 +418,10 @@ def evaluate_fibvol_signal(base, klines_tuple, now_ms, state):
                         watching["entry_px"] = entry_px
                         watching["sl_px"] = sl_px
                         watching["tp_px"] = tp_px
+                        watching["atr"] = cur_atr
                         watching["last_eval_t"] = cur_t
                         watching["spike_mult"] = vol_mult
-                        log(f"[{base}] 🔄 UPDATED GREEN CANDLE FIB LEVELS ({ENTRY_FIB_LEVEL} Entry / {SL_FIB_LEVEL} SL): Entry={entry_px}, SL={sl_px}, TP={tp_px}")
+                        log(f"[{base}] 🔄 UPDATED GREEN CANDLE FIB LEVELS ({ENTRY_FIB_LEVEL} Entry / {SL_FIB_LEVEL} SL): Entry={entry_px}, SL={sl_px}, TP={tp_px}, ATR(14)={cur_atr:.6f}")
                         return watching, "WATCH_UPDATED"
                     else:
                         watching["last_eval_t"] = cur_t
@@ -417,7 +432,7 @@ def evaluate_fibvol_signal(base, klines_tuple, now_ms, state):
                 log(f"[{base}] 🛑 RED CANDLE CLOSED ({cur_c:.6f} < {cur_o:.6f}). Cancelling watch loop.")
                 return None, "WATCH_CANCELLED"
             
-    # Check for NEW 30x volume spike trigger
+    # Check for NEW volume spike trigger
     if is_green and vol_mult >= SPIKE_VOL_MULT:
         last_spike_t = state.get("last_spikes", {}).get(base, 0)
         if cur_t > last_spike_t:
@@ -451,9 +466,10 @@ def evaluate_fibvol_signal(base, klines_tuple, now_ms, state):
                         "low": tot_low,
                         "entry_px": entry_px,
                         "sl_px": sl_px,
-                        "tp_px": tp_px
+                        "tp_px": tp_px,
+                        "atr": cur_atr
                     }
-                    log(f"[{base}] 🚀 {SPIKE_VOL_MULT:.0f}X VOLUME SPIKE + 2 CONSECUTIVE GREEN CANDLES CONFIRMED ({vol_mult:.1f}x)! Limit Order Armed @ Fib {ENTRY_FIB_LEVEL} Entry={entry_px}, SL={sl_px}, TP={tp_px}")
+                    log(f"[{base}] 🚀 {SPIKE_VOL_MULT:.0f}X VOLUME SPIKE + 2 CONSECUTIVE GREEN CANDLES CONFIRMED ({vol_mult:.1f}x)! Limit Order Armed @ Fib {ENTRY_FIB_LEVEL} Entry={entry_px}, SL={sl_px}, TP={tp_px}, ATR(14)={cur_atr:.6f}")
                     return signal_info, "NEW_SPIKE_ARMED"
             else:
                 # Spike is Green Candle 1 (prior candle was red). Set to WAITING_2ND_GREEN!
@@ -467,7 +483,8 @@ def evaluate_fibvol_signal(base, klines_tuple, now_ms, state):
                     "low": cur_l,
                     "entry_px": 0.0,
                     "sl_px": 0.0,
-                    "tp_px": 0.0
+                    "tp_px": 0.0,
+                    "atr": cur_atr
                 }
                 log(f"[{base}] ⏳ {SPIKE_VOL_MULT:.0f}X VOLUME SPIKE DETECTED ({vol_mult:.1f}x) on Green Candle 1. Waiting for 2nd consecutive green candle to close before arming limit order.")
                 return signal_info, "NEW_SPIKE_WAITING"
@@ -480,6 +497,7 @@ def main():
     log(f"⚡ COINDCX {SPIKE_VOL_MULT:.0f}X VOLUME SPIKE FIBONACCI (FIBVOL) STRATEGY STARTED ⚡")
     log(f"   Timeframe: {TF} | Volume Spike: >={SPIKE_VOL_MULT}x | Entry Fib: {ENTRY_FIB_LEVEL}")
     log(f"   SL Fib: {SL_FIB_LEVEL} | Risk Reward: 1:{RR_RATIO:.1f} | Risk per Trade: {RISK_FRAC*100}%")
+    log(f"   Trailing SL: {'ATR-Activated (Act @ +' + str(TRAIL_ATR_ACT) + ' ATR, Trail ' + str(TRAIL_ATR_DIST) + ' ATR)' if TRAIL_MODE == 'atr_activated' else 'Fixed R (Act @ +' + str(TRAIL_ACT_R) + 'R, Trail ' + str(TRAIL_DIST_R) + 'R)' if TRAIL_ENABLE else 'Disabled'}")
     log(f"   Mode: {'🔴 LIVE ARMED TRADING' if ARMED else '🟡 PAPER TRADING SIMULATION'}")
     log("===================================================================")
     
@@ -547,7 +565,7 @@ def main():
                     save_state(state)
                     continue
 
-                # Dynamic Trailing Stop Loss step-up logic
+                # Dynamic Trailing Stop Loss step-up logic (Activated ATR Trailing)
                 peak_px = float(pos.get("peak_px", entry_px))
                 if cur_price > peak_px:
                     peak_px = cur_price
@@ -556,32 +574,48 @@ def main():
                     if TRAIL_ENABLE:
                         initial_sl = float(pos.get("initial_sl_px", sl_px))
                         risk = entry_px - initial_sl
-                        if risk > 0:
-                            peak_r = (peak_px - entry_px) / risk
-                            if peak_r >= TRAIL_ACT_R:
-                                desired_sl = A._round_px(base, peak_px - (TRAIL_DIST_R * risk))
-                                if desired_sl > sl_px and (desired_sl - sl_px) / entry_px >= 0.001:
-                                    pos["sl_px"] = desired_sl
-                                    log(f"[{base}] 📈 DYNAMIC TRAILING SL STEP: Peak {peak_px:.6f} (+{peak_r:.2f}R) -> New Trailing SL {desired_sl:.6f}")
-                                    if ARMED and pos_id:
-                                        try:
-                                            A.update_tpsl(pos_id, base, sl_price=desired_sl)
-                                            log(f"[{base}] 🔒 Updated exchange Stop Loss to {desired_sl} on CoinDCX Acc 1")
-                                        except Exception as e:
-                                            err_str = str(e)
-                                            log(f"[{base}] Update exchange SL error (Acc 1): {e}")
-                                            if "Trigger price should be less than" in err_str or "less than the current price" in err_str:
-                                                log(f"[{base}] ⚠️ Price retraced below trailing SL {desired_sl}. Triggering immediate exit!")
-                                                cur_price = min(cur_price, desired_sl)
-                                    if ARMED and A2:
-                                        try:
-                                            p2 = next((p for p in (A2.fetch_positions() or []) if p.get("base") == base), None)
-                                            if p2 and p2.get("id"):
-                                                A2.update_tpsl(p2["id"], base, sl_price=desired_sl)
-                                                log(f"[{base}] 🔒 Updated exchange Stop Loss to {desired_sl} on CoinDCX Acc 2")
-                                        except Exception as e2:
-                                            pass
-                                    save_state(state)
+                        pos_atr = float(pos.get("atr", 0.0))
+                        if pos_atr <= 0:
+                            pos_atr = risk if risk > 0 else (entry_px * 0.02)
+                        
+                        desired_sl = 0.0
+                        step_label = ""
+                        if TRAIL_MODE == "atr_activated":
+                            # Activate when profit >= TRAIL_ATR_ACT * ATR, trail TRAIL_ATR_DIST * ATR behind peak
+                            profit_dist = peak_px - entry_px
+                            if profit_dist >= (TRAIL_ATR_ACT * pos_atr):
+                                desired_sl = A._round_px(base, peak_px - (TRAIL_ATR_DIST * pos_atr))
+                                step_label = f"+{profit_dist/pos_atr:.2f} ATR profit -> Trail {TRAIL_ATR_DIST:.1f}x ATR"
+                        else:
+                            # Fallback Fixed R Trailing
+                            if risk > 0:
+                                peak_r = (peak_px - entry_px) / risk
+                                if peak_r >= TRAIL_ACT_R:
+                                    desired_sl = A._round_px(base, peak_px - (TRAIL_DIST_R * risk))
+                                    step_label = f"+{peak_r:.2f}R -> Trail {TRAIL_DIST_R:.1f}R"
+                                    
+                        if desired_sl > sl_px and (desired_sl - sl_px) / entry_px >= 0.001:
+                            pos["sl_px"] = desired_sl
+                            log(f"[{base}] 📈 DYNAMIC TRAILING SL STEP ({step_label}): Peak {peak_px:.6f} -> New Trailing SL {desired_sl:.6f}")
+                            if ARMED and pos_id:
+                                try:
+                                    A.update_tpsl(pos_id, base, sl_price=desired_sl)
+                                    log(f"[{base}] 🔒 Updated exchange Stop Loss to {desired_sl} on CoinDCX Acc 1")
+                                except Exception as e:
+                                    err_str = str(e)
+                                    log(f"[{base}] Update exchange SL error (Acc 1): {e}")
+                                    if "Trigger price should be less than" in err_str or "less than the current price" in err_str:
+                                        log(f"[{base}] ⚠️ Price retraced below trailing SL {desired_sl}. Triggering immediate exit!")
+                                        cur_price = min(cur_price, desired_sl)
+                            if ARMED and A2:
+                                try:
+                                    p2 = next((p for p in (A2.fetch_positions() or []) if p.get("base") == base), None)
+                                    if p2 and p2.get("id"):
+                                        A2.update_tpsl(p2["id"], base, sl_price=desired_sl)
+                                        log(f"[{base}] 🔒 Updated exchange Stop Loss to {desired_sl} on CoinDCX Acc 2")
+                                except Exception as e2:
+                                    pass
+                            save_state(state)
 
                 # Check Stop Loss Trigger
                 if cur_price <= sl_px:
@@ -778,6 +812,7 @@ def main():
                         "peak_px": fill_entry_px,
                         "tp_px": tp_px,
                         "qty": qty,
+                        "atr": float(watching.get("atr", fill_entry_px - sl_px)),
                         "entry_t": now_ms,
                         "pos_id": pos_id,
                         "msg_id": msg_id
