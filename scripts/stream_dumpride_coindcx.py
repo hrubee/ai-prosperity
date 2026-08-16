@@ -139,14 +139,68 @@ if A2:
     log(f"[MultiAccount] Secondary CoinDCX Account Enabled (Key ending in ...{KEY_2[-6:]})")
 
 # ── Telegram Notifications ────────────────────────────────────────────────────
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8683548180:AAFwxp682aMZHh-_BHZksBUfEhEoEfvTeyk")
+TELEGRAM_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "7871236037")
+
 try:
-    from b2_telegram import send_telegram_alert, post_entry, post_exit
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    sys.path.insert(0, script_dir)
+    sys.path.insert(0, "/root/trading-bot/crypto/shared_scripts")
+    import b2_telegram as TG
     TELEGRAM_ENABLED = True
-except Exception:
+except Exception as te:
+    TG = None
     TELEGRAM_ENABLED = False
-    def send_telegram_alert(msg): log(f"TELEGRAM: {msg}")
-    def post_entry(*args, **kwargs): pass
-    def post_exit(*args, **kwargs): pass
+
+def notify_telegram(msg):
+    log(f"TELEGRAM: {msg}")
+    if TG and hasattr(TG, "send_telegram_msg"):
+        try:
+            TG.send_telegram_msg(msg, token=TELEGRAM_TOKEN, chat_id=TELEGRAM_CHAT)
+        except Exception:
+            pass
+
+def post_entry_chart(base, entry_px, sl_px, tp_px, account="DumpRide 4H"):
+    if TG and hasattr(TG, "post_entry"):
+        try:
+            return TG.post_entry(
+                token=TELEGRAM_TOKEN,
+                chat=TELEGRAM_CHAT,
+                base=base,
+                bias="short",
+                entry=entry_px,
+                sl=sl_px,
+                tp=tp_px,
+                risk_pct=RISK_FRAC,
+                account=account,
+                tf="4h"
+            )
+        except Exception as e:
+            log(f"Telegram post_entry error: {e}")
+    return None
+
+def post_exit_chart(base, exit_px, entry_px, initial_sl_px, pnl_usdt, reason, reply_to_msg_id=None, account="DumpRide 4H"):
+    if TG and hasattr(TG, "post_exit"):
+        try:
+            risk = max(abs(initial_sl_px - entry_px), 1e-9)
+            r_multiple = (entry_px - exit_px) / risk if risk > 0 else 0.0
+            return TG.post_exit(
+                token=TELEGRAM_TOKEN,
+                chat=TELEGRAM_CHAT,
+                reply_to_msg_id=reply_to_msg_id,
+                base=base,
+                bias="short",
+                reason=reason,
+                exit_px=exit_px,
+                r=r_multiple,
+                pnl=pnl_usdt,
+                account=account,
+                entry=entry_px,
+                sl=initial_sl_px
+            )
+        except Exception as e:
+            log(f"Telegram post_exit error: {e}")
+    return False
 
 # ── Sizing & Risk Math ────────────────────────────────────────────────────────
 def calculate_short_position_size(base, entry_px, sl_px, wallet_inr, adapter=None):
@@ -314,17 +368,19 @@ def execute_dumpride_short(sig, adapter, account_label="Primary"):
         )
         log(f"[{account_label}] ✅ COINDCX ORDER PLACED: {order_res.get('id', 'N/A')}")
         
-        # Telegram Notification
+        # Telegram Notification with Rendered Chart
+        tg_msg_id = None
         if TELEGRAM_ENABLED:
-            send_telegram_alert(
-                f"🚨 <b>4H DumpRide SHORT Opened ({account_label})</b>\n"
-                f"• Coin: <b>#{base}</b>\n"
-                f"• 4H Volume Surge: <b>{sig['vol_mult']:.1f}x</b> (+{sig['pump_pct']:.1f}%)\n"
-                f"• Entry: <code>{entry_px:.6g}</code>\n"
-                f"• Stop Loss: <code>{sl_px:.6g}</code> (+{((sl_px-entry_px)/entry_px)*100:.2f}%)\n"
-                f"• Take Profit: <code>{tp_px:.6g}</code> (-{((entry_px-tp_px)/entry_px)*100:.2f}%)\n"
-                f"• Risk: ₹{risk_inr:.1f}"
-            )
+            try:
+                tg_msg_id = post_entry_chart(
+                    base=base,
+                    entry_px=entry_px,
+                    sl_px=sl_px,
+                    tp_px=tp_px,
+                    account=f"DumpRide ({account_label})"
+                )
+            except Exception as te:
+                log(f"Telegram entry error: {te}")
             
         return {
             "id": order_res.get("id"),
@@ -334,6 +390,7 @@ def execute_dumpride_short(sig, adapter, account_label="Primary"):
             "tp_px": tp_px,
             "qty": qty,
             "account": account_label,
+            "tg_msg_id": tg_msg_id,
             "entry_t": int(time.time() * 1000)
         }
     except Exception as e:
@@ -347,6 +404,7 @@ def run_dumpride_engine():
     log(f"   Timeframe: {TF} | Volume Spike Trigger: >={SPIKE_VOL_MULT:.1f}x")
     log(f"   Stop Loss: {SL_ATR_MULT:.1f}x ATR(14) | Target: 1:{int(RR_TARGET)} RR")
     log(f"   Risk Allocation: {RISK_FRAC*100:.1f}% per trade | Max Concurrent: {MAX_CONCURRENT}")
+    log(f"   Telegram Alerter: Bot @volsp_bot -> User: {TELEGRAM_CHAT}")
     log(f"   Execution Mode: {'🔴 LIVE ARMED TRADING' if ARMED else '🟡 PAPER MODE / MONITORING'}")
     log("===================================================================\n")
     
@@ -367,9 +425,34 @@ def run_dumpride_engine():
                     for sym in list(active_positions.keys()):
                         if sym not in active_symbols:
                             pos_info = active_positions.pop(sym)
-                            log(f"[{sym}] 🏁 POSITION CLOSED ON EXCHANGE. Duration: {(now_ms - pos_info['entry_t'])/60000:.1f} mins.")
+                            duration_mins = (now_ms - pos_info.get("entry_t", now_ms)) / 60000.0
+                            log(f"[{sym}] 🏁 POSITION CLOSED ON EXCHANGE. Duration: {duration_mins:.1f} mins.")
+                            
+                            # Fetch real exit fill from CoinDCX
+                            real_exit_px, fill_qty, fees = A.fetch_executed_trade_vwap(sym, side="buy")
+                            if real_exit_px <= 0:
+                                real_exit_px = pos_info.get("tp_px", pos_info.get("entry_px"))
+                                
+                            risk_dist = max(abs(pos_info.get("sl_px", 0) - pos_info.get("entry_px", 0)), 1e-9)
+                            r_multiple = (pos_info.get("entry_px", 0) - real_exit_px) / risk_dist
+                            pnl_usdt = (pos_info.get("entry_px", 0) - real_exit_px) * pos_info.get("qty", 0)
+                            reason = "TP Target Hit" if r_multiple > 0 else "Stop Loss Hit"
+                            
+                            # Post Exit Chart Reply to Telegram
                             if TELEGRAM_ENABLED:
-                                send_telegram_alert(f"🏁 <b>Position Closed: #{sym}</b>\nTrade complete on exchange.")
+                                try:
+                                    post_exit_chart(
+                                        base=sym,
+                                        exit_px=real_exit_px,
+                                        entry_px=pos_info.get("entry_px", 0),
+                                        initial_sl_px=pos_info.get("sl_px", 0),
+                                        pnl_usdt=pnl_usdt,
+                                        reason=reason,
+                                        reply_to_msg_id=pos_info.get("tg_msg_id"),
+                                        account=f"DumpRide ({pos_info.get('account', 'Primary')})"
+                                    )
+                                except Exception as te:
+                                    log(f"Telegram exit chart error: {te}")
                 except Exception as pe:
                     log(f"Reconciliation error: {pe}")
                     
