@@ -28,7 +28,7 @@ TF = os.environ.get("FIBVOL_TF", "15m")
 TF_SEC = {"1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600}.get(TF, 900)
 TF_MS = TF_SEC * 1000
 
-SPIKE_VOL_MULT = float(os.environ.get("FIBVOL_SPIKE_VOL", "30.0"))
+SPIKE_VOL_MULT = float(os.environ.get("FIBVOL_SPIKE_VOL", "10.0"))
 ENTRY_FIB_LEVEL = float(os.environ.get("FIBVOL_ENTRY_FIB", "0.600"))
 SL_FIB_LEVEL = float(os.environ.get("FIBVOL_SL_FIB", "0.700"))
 RR_RATIO = float(os.environ.get("FIBVOL_RR_RATIO", "5.0"))
@@ -477,7 +477,7 @@ def evaluate_fibvol_signal(base, klines_tuple, now_ms, state):
 # ── Main Execution Loop ───────────────────────────────────────────────────────
 def main():
     log("===================================================================")
-    log("⚡ COINDCX 30X VOLUME SPIKE FIBONACCI (FIBVOL) STRATEGY STARTED ⚡")
+    log(f"⚡ COINDCX {SPIKE_VOL_MULT:.0f}X VOLUME SPIKE FIBONACCI (FIBVOL) STRATEGY STARTED ⚡")
     log(f"   Timeframe: {TF} | Volume Spike: >={SPIKE_VOL_MULT}x | Entry Fib: {ENTRY_FIB_LEVEL}")
     log(f"   SL Fib: {SL_FIB_LEVEL} | Risk Reward: 1:{RR_RATIO:.1f} | Risk per Trade: {RISK_FRAC*100}%")
     log(f"   Mode: {'🔴 LIVE ARMED TRADING' if ARMED else '🟡 PAPER TRADING SIMULATION'}")
