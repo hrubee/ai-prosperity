@@ -88,7 +88,7 @@ def save_state(state):
         print(f"Error saving state: {e}")
 
 def log(msg):
-    tstr = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z")
+    tstr = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S IST")
     print(f"[{tstr}] {msg}", flush=True)
 
 # ── Balance & Risk Math ───────────────────────────────────────────────────────
@@ -137,7 +137,7 @@ def fetch_coin_klines(base):
 
 def fetch_all_klines(coins):
     data = {}
-    with ThreadPoolExecutor(max_workers=25) as ex:
+    with ThreadPoolExecutor(max_workers=50) as ex:
         futures = {ex.submit(fetch_coin_klines, coin): coin for coin in coins}
         for fut in futures:
             coin = futures[fut]
@@ -242,12 +242,15 @@ def evaluate_short_signal(base, klines_tuple, now_ms, state):
             
     return None, "NO_SIGNAL"
 
+SCAN_INTERVAL = float(os.environ.get("MR_SCAN_INTERVAL", "15.0")) # 15s candle scan loop
+
 # ── Main Loop ─────────────────────────────────────────────────────────────────
 def main():
     log("===================================================================")
     log("⚡ COINDCX MEAN REVERSION SHORTING STRATEGY STARTED ⚡")
     log(f"   Timeframe: {TF} | Spike Vol: >={SPIKE_VOL_MULT}x | Exit: 70% Retrace")
     log(f"   Mode: {'🔴 LIVE ARMED TRADING' if ARMED else '🟡 PAPER TRADING SIMULATION'}")
+    log(f"   Scan Interval: {SCAN_INTERVAL}s | Positions Poll: {POLL_INTERVAL}s")
     log("===================================================================")
     
     state = load_state()
@@ -255,15 +258,27 @@ def main():
     state.setdefault("positions", {})
     state.setdefault("last_spikes", {})
     
+    last_scan_t = 0
+    klines_map = {}
+    
     while True:
         try:
             now_ms = int(time.time() * 1000)
+            now_sec = time.time()
+            
             universe = sorted(list(A.active_bases() or []))
             if not universe:
-                time.sleep(10)
+                time.sleep(5)
                 continue
                 
-            klines_map = fetch_all_klines(universe)
+            # Scan universe on scan interval
+            if now_sec - last_scan_t >= SCAN_INTERVAL:
+                t0 = time.time()
+                klines_map = fetch_all_klines(universe)
+                last_scan_t = now_sec
+                w_count = len(state.get("watching", {}))
+                p_count = len(state.get("positions", {}))
+                log(f"🔍 Scanned {len(klines_map)}/{len(universe)} coins in {time.time()-t0:.1f}s | Watching: {w_count} | Positions: {p_count}")
             
             # Reconcile Positions
             active_positions = state.get("positions", {})
