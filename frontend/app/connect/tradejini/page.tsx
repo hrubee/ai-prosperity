@@ -83,7 +83,7 @@ export default function TradejiniConnectPage() {
               <p className="text-sm text-muted">
                 Open the{" "}
                 <a
-                  href="https://api.tradejini.com/developer-portal/auth/login"
+                  href="https://developer.tradejini.com/dashboard"
                   target="_blank"
                   rel="noreferrer"
                   className="text-gold-400 underline"
