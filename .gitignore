@@ -15,5 +15,9 @@ executor/.venv/
 *.pem
 *.key
 
+# Data / Datasets
+datasets/
+*.db
+
 # OS
 .DS_Store
