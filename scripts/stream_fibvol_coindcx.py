@@ -812,7 +812,7 @@ def main():
                         "peak_px": fill_entry_px,
                         "tp_px": tp_px,
                         "qty": qty,
-                        "atr": float(watching.get("atr", fill_entry_px - sl_px)),
+                        "atr": float(watch.get("atr", fill_entry_px - sl_px)),
                         "entry_t": now_ms,
                         "pos_id": pos_id,
                         "msg_id": msg_id
