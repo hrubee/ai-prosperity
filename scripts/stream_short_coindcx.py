@@ -55,6 +55,7 @@ START_BAL_INR = float(os.environ.get("MR_START_BAL_INR", "16000"))
 OUT_DIR = os.environ.get("MR_OUT", os.path.expanduser("~/short_coindcx"))
 os.makedirs(OUT_DIR, exist_ok=True)
 STATE_FILE = os.path.join(OUT_DIR, "state.json")
+TRADES_FILE = os.path.join(OUT_DIR, "trades.jsonl")
 ACCOUNT_NAME = "CoinDCX Acc 1 (Shorting)"
 
 # Initialize CoinDCX Adapters
@@ -90,6 +91,21 @@ def save_state(state):
 def log(msg):
     tstr = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S IST")
     print(f"[{tstr}] {msg}", flush=True)
+
+def log_trade(event: str, base: str, **kwargs):
+    """Append a trade event to trades.jsonl for permanent audit trail."""
+    record = {
+        "ts": datetime.datetime.now().isoformat(),
+        "event": event,   # ENTRY | EXIT_SL | EXIT_TP | EXIT_EXCHANGE
+        "base": base,
+        "mode": "LIVE" if ARMED else "PAPER",
+        **kwargs
+    }
+    try:
+        with open(TRADES_FILE, "a") as f:
+            f.write(json.dumps(record) + "\n")
+    except Exception as e:
+        log(f"[{base}] ⚠️ Failed to write trade log: {e}")
 
 # ── Balance & Risk Math ───────────────────────────────────────────────────────
 def get_wallet_usdt(state):
@@ -325,6 +341,12 @@ def main():
                     pnl_usdt = (pos["entry_px"] - exit_px) * pos["qty"] - exec_fees
                     state["_bal_inr"] += pnl_usdt * getattr(A, "inr_per_usdt", 102.0)
                     log(f"[{base}] 🏦 SHORT POSITION CLOSED ON EXCHANGE @ REAL VWAP {exit_px:.6f}! PnL: ${pnl_usdt:+.2f}")
+                    log_trade("EXIT_EXCHANGE", base,
+                        entry_px=pos["entry_px"], exit_px=exit_px,
+                        qty=pos["qty"], pnl_usdt=round(pnl_usdt, 4),
+                        sl_px=pos["sl_px"], tp_px=pos["tp_px"],
+                        entry_t=pos.get("entry_t"), fees_usdt=round(exec_fees, 4),
+                        pos_id=pos_id)
                     del state["positions"][base]
                     save_state(state)
                     continue
@@ -340,6 +362,11 @@ def main():
                     pnl_usdt = (pos["entry_px"] - exit_px) * pos["qty"]
                     state["_bal_inr"] += pnl_usdt * getattr(A, "inr_per_usdt", 102.0)
                     log(f"[{base}] 🔴 SHORT STOP LOSS HIT @ {exit_px:.6f}! PnL: ${pnl_usdt:+.2f}")
+                    log_trade("EXIT_SL", base,
+                        entry_px=pos["entry_px"], exit_px=exit_px,
+                        qty=pos["qty"], pnl_usdt=round(pnl_usdt, 4),
+                        sl_px=pos["sl_px"], tp_px=pos["tp_px"],
+                        entry_t=pos.get("entry_t"), pos_id=pos_id)
                     del state["positions"][base]
                     save_state(state)
                     continue
@@ -355,6 +382,11 @@ def main():
                     pnl_usdt = (pos["entry_px"] - exit_px) * pos["qty"]
                     state["_bal_inr"] += pnl_usdt * getattr(A, "inr_per_usdt", 102.0)
                     log(f"[{base}] 🎯 SHORT TAKE PROFIT HIT @ {exit_px:.6f}! PnL: ${pnl_usdt:+.2f}")
+                    log_trade("EXIT_TP", base,
+                        entry_px=pos["entry_px"], exit_px=exit_px,
+                        qty=pos["qty"], pnl_usdt=round(pnl_usdt, 4),
+                        sl_px=pos["sl_px"], tp_px=pos["tp_px"],
+                        entry_t=pos.get("entry_t"), pos_id=pos_id)
                     del state["positions"][base]
                     save_state(state)
                     continue
@@ -445,6 +477,12 @@ def main():
                     del state["watching"][base]
                     save_state(state)
                     log(f"[{base}] 📉 SHORT POSITION TRIGGERED: Entry={entry_px}, SL={sl_px}, TP={tp_px}, Qty={qty}")
+                    log_trade("ENTRY", base,
+                        entry_px=entry_px, sl_px=sl_px, tp_px=tp_px,
+                        qty=qty, entry_t=now_ms, pos_id=pos_id,
+                        spike_mult=signal_info.get("spike_mult"),
+                        pump_start_px=signal_info.get("pump_start_px"),
+                        pump_peak_px=signal_info.get("pump_peak_px"))
             
             save_state(state)
             time.sleep(POLL_INTERVAL)
