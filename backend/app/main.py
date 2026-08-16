@@ -253,13 +253,15 @@ def change_password(body: ChangePasswordRequest, user: User = Depends(auth.curre
 def me(user: User = Depends(auth.current_user), db: Session = Depends(get_db)):
     sub = db.query(Subscription).filter(Subscription.user_id == user.id).one_or_none()
     conn = db.query(DeltaConnection).filter(DeltaConnection.user_id == user.id).one_or_none()
+    # Admins are always considered approved — no manual payment/approval gate
+    effective_status = "approved" if user.role == "admin" else (user.payment_status or "pending")
     return {
         "email": user.email,
         "name": user.name,
         "phone": user.phone,
         "client_id": user.client_id,
         "role": user.role,
-        "payment_status": user.payment_status or "pending",
+        "payment_status": effective_status,
         "subscription": None if sub is None else {"package": sub.package, "status": sub.status},
         "connection": None if conn is None else {"status": conn.status, "paused": conn.paused},
     }

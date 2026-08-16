@@ -57,7 +57,7 @@ export default function Dashboard() {
     load();
   }, []);
 
-  const isApproved = me?.payment_status === "approved";
+  const isApproved = me?.payment_status === "approved" || me?.role === "admin";
 
   return (
     <main className="min-h-screen">
