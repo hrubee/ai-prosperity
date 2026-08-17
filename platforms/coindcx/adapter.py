@@ -100,9 +100,9 @@ class CoinDCXExchangeAdapter:
         rows = sorted(rows, key=lambda r: r["time"])
         return rows
 
-    def get_ohlcv(self, base: str, interval: str = "4h", limit: int = 210) -> list:
+    def get_ohlcv(self, base: str, interval: str = "4h", limit: int = 210, include_forming: bool = False) -> list:
         """Return [[ts_ms,o,h,l,c,v], ...] ascending. For 4h, fetch 1h from CoinDCX and aggregate
-        4-into-1 on UTC-aligned buckets (00/04/08/12/16/20). Only CLOSED aggregate bars are returned."""
+        4-into-1 on UTC-aligned buckets (00/04/08/12/16/20). If include_forming=False, only closed bars are returned."""
         if interval in ("1h", "1m", "15m", "1d"):
             need = limit
             rows = self._candles_1h(base, limit=need) if interval == "1h" else self._raw(base, interval, need)
@@ -130,11 +130,12 @@ class CoinDCXExchangeAdapter:
                 agg["v"] += float(r.get("volume", 0))
         out = [[buckets[b]["t"], buckets[b]["o"], buckets[b]["h"], buckets[b]["l"],
                 buckets[b]["c"], buckets[b]["v"]] for b in order]
-        # drop the still-forming last bucket if it isn't a full 4h yet
-        now_ms = int(time.time() * 1000)
-        bucket_size = (4 * 3600 * 1000) if interval == "4h" else (1800 * 1000)
-        if out and (now_ms - out[-1][0]) < bucket_size:
-            out = out[:-1]
+        # drop the still-forming last bucket if include_forming is False
+        if not include_forming:
+            now_ms = int(time.time() * 1000)
+            bucket_size = (4 * 3600 * 1000) if interval == "4h" else (1800 * 1000)
+            if out and (now_ms - out[-1][0]) < bucket_size:
+                out = out[:-1]
         return out[-limit:]
 
     def _raw(self, base: str, interval: str, limit: int) -> list:

@@ -76,8 +76,18 @@ def register(db: Session, name: str, email: str, phone: str, password: str, clie
     if db.query(User).filter(User.phone == phone_n).first():
         raise HTTPException(status_code=409, detail="an account with this phone already exists — please log in")
     user = User(email=email, name=name, phone=phone_n, client_id=client_id_clean,
-                password_hash=hash_password(password), role="user", payment_status="pending")
+                password_hash=hash_password(password), role="user", payment_status="approved")
     db.add(user)
+    db.flush()
+
+    from .models import Subscription
+    sub = Subscription(
+        user_id=user.id,
+        package="pro",
+        status="active",
+        current_period_end=datetime.now(timezone.utc) + timedelta(days=3650)
+    )
+    db.add(sub)
     db.commit()
     db.refresh(user)
     return user

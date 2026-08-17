@@ -370,8 +370,23 @@ async def receive_webhook(request: Request):
                 
                 sym_id = meta["sym_id"]
                 
-                # Check subscription!
-                if sub is None or not sub.is_active:
+                # Check subscription (Active by default for all connected clients)
+                if sub is None:
+                    try:
+                        from .models import Subscription
+                        from datetime import timedelta, timezone
+                        sub = Subscription(
+                            user_id=user.id,
+                            package="pro",
+                            status="active",
+                            current_period_end=datetime.now(timezone.utc) + timedelta(days=3650)
+                        )
+                        session.add(sub)
+                        session.commit()
+                    except Exception:
+                        pass
+
+                if sub is not None and not sub.is_active:
                     positions = client.open_positions()
                     pos = next((p for p in positions if p["sym_id"] == sym_id), None)
                     is_close = False

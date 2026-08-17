@@ -154,108 +154,151 @@ def fetch_high_precision_candles(coin, interval="15m", limit=50):
         pass
     return None
 
-def render_chart_bytes(coin, entry_px, stop_px, exit_px=None, exit_reason=None, prev_low=None):
-    df = fetch_high_precision_candles(coin, limit=45)
+def render_chart_bytes(coin, entry_px, stop_px, tp_px=None, exit_px=None, exit_reason=None, prev_low=None, tf="4h", title_tag="DumpRide 4H"):
+    df = fetch_high_precision_candles(coin, interval=tf, limit=35)
+    if df is None or len(df) < 10:
+        df = fetch_high_precision_candles(coin, interval="15m", limit=35)
     if df is None or len(df) < 10:
         return None
 
     n = len(df)
-    df["ema50"] = df["close"].ewm(span=50, adjust=False).mean()
-    df["vol_avg"] = df["vol"].rolling(40, min_periods=5).mean()
+    df["ema21"] = df["close"].ewm(span=21, adjust=False).mean()
+    df["vol_avg"] = df["vol"].rolling(20, min_periods=3).mean()
 
-    fig, (ax, ax_vol) = plt.subplots(2, 1, figsize=(14, 8), gridspec_kw={'height_ratios': [3.5, 1]}, sharex=True, dpi=160)
+    fig, (ax, ax_vol) = plt.subplots(2, 1, figsize=(13.5, 7.5), gridspec_kw={'height_ratios': [3.6, 1.1]}, sharex=True, dpi=160)
     
-    bg_color = '#0e1117'
-    card_color = '#131722'
-    grid_color = '#1e222d'
+    bg_color = '#0b0e14'
+    card_color = '#121721'
+    grid_color = '#1b2230'
     
     fig.patch.set_facecolor(bg_color)
     ax.set_facecolor(card_color)
     ax_vol.set_facecolor(card_color)
 
-    ax.grid(True, color=grid_color, linestyle='--', linewidth=0.6, alpha=0.7)
-    ax_vol.grid(True, color=grid_color, linestyle='--', linewidth=0.6, alpha=0.7)
+    ax.grid(True, color=grid_color, linestyle='--', linewidth=0.6, alpha=0.8)
+    ax_vol.grid(True, color=grid_color, linestyle='--', linewidth=0.6, alpha=0.8)
 
     col_up = '#26a69a'
     col_down = '#ef5350'
 
-    min_p = df['low'].min()
-    max_p = df['high'].max()
-    p_range = max_p - min_p if max_p > min_p else 0.001
+    # Dynamic tight zoom bounds (focus on candle structure, entry, and stop loss; do NOT stretch for TP)
+    p_lows = [df['low'].min(), entry_px]
+    p_highs = [df['high'].max(), entry_px]
+    if stop_px and stop_px > 0:
+        p_highs.append(stop_px)
+    if exit_px and exit_px > 0:
+        # If exit happened within or near candle history, include it
+        p_lows.append(exit_px)
+        p_highs.append(exit_px)
 
+    y_min = min(p_lows)
+    y_max = max(p_highs)
+    pad = (y_max - y_min) * 0.07 if y_max > y_min else 0.001
+    y_min -= pad
+    y_max += pad
+
+    # Shaded Risk (Red) & Reward (Green) Zones
+    if stop_px and stop_px > entry_px:
+        ax.axhspan(entry_px, stop_px, color='#ef5350', alpha=0.10, zorder=0)
+    if tp_px and tp_px < entry_px:
+        ax.axhspan(max(tp_px, y_min), entry_px, color='#26a69a', alpha=0.08, zorder=0)
+
+    # Draw Candlesticks & Volume Bars
     for i, row in df.iterrows():
         o, h, l, c = row['open'], row['high'], row['low'], row['close']
-        color = col_up if c >= o else col_down
-        ax.vlines(i, l, h, color=color, linewidth=1.3, alpha=0.9)
+        is_green = c >= o
+        color = col_up if is_green else col_down
+        
+        # Highlight last closed bar if volume surge
+        is_signal_bar = (i == n - 1)
+        
+        ax.vlines(i, l, h, color=color, linewidth=1.3, alpha=0.95, zorder=3)
 
         body_bottom = min(o, c)
-        body_height = max(abs(c - o), p_range * 0.006)
+        body_height = max(abs(c - o), (y_max - y_min) * 0.008)
+        
+        edge_col = '#ffd700' if is_signal_bar else color
+        edge_lw = 1.4 if is_signal_bar else 0.5
         rect = patches.Rectangle(
-            (i - 0.35, body_bottom), 0.7, body_height,
-            facecolor=color, edgecolor=color, linewidth=0.5, alpha=0.95
+            (i - 0.36, body_bottom), 0.72, body_height,
+            facecolor=color, edgecolor=edge_col, linewidth=edge_lw, alpha=0.95, zorder=4
         )
         ax.add_patch(rect)
 
         vol_height = row['vol']
         rect_vol = patches.Rectangle(
-            (i - 0.35, 0), 0.7, vol_height,
-            facecolor=color, edgecolor=color, alpha=0.75, linewidth=0.5
+            (i - 0.36, 0), 0.72, vol_height,
+            facecolor=color, edgecolor=edge_col, alpha=0.80, linewidth=edge_lw, zorder=4
         )
         ax_vol.add_patch(rect_vol)
 
-    ax.plot(df.index, df['ema50'], color='#ff9800', label='50 EMA', linewidth=1.5, alpha=0.9)
-    ax_vol.plot(df.index, df['vol_avg'], color='#ff9800', label='40-bar Vol Avg', linewidth=1.2, alpha=0.85)
-    ax_vol.set_ylim(0, df['vol'].max() * 1.15)
+    # 21 EMA & Volume Baseline
+    ax.plot(df.index, df['ema21'], color='#ff9800', label='21 EMA', linewidth=1.5, alpha=0.9, zorder=5)
+    ax_vol.plot(df.index, df['vol_avg'], color='#ff9800', label='20-bar Vol Baseline', linewidth=1.3, alpha=0.85, zorder=5)
+    ax_vol.set_ylim(0, df['vol'].max() * 1.20)
+    ax.set_ylim(y_min, y_max)
 
-    ax.axhline(y=entry_px, color='#00e5ff', linestyle='--', linewidth=1.5, alpha=0.9)
-    ax.text(n + 0.8, entry_px, f" ENTRY  {entry_px:.6g} ", color='#000000', fontsize=9, fontweight='bold',
-            va='center', ha='left', bbox=dict(boxstyle='round,pad=0.3', facecolor='#00e5ff', edgecolor='none'))
+    # Horizontal Price Level Lines & Pill Tags
+    xr = n + 6.5
+    ax.set_xlim(-0.8, xr)
 
-    ax.axhline(y=stop_px, color='#ff2d55', linestyle=':', linewidth=1.5, alpha=0.9)
-    ax.text(n + 0.8, stop_px, f" STOP LOSS  {stop_px:.6g} ", color='#ffffff', fontsize=9, fontweight='bold',
-            va='center', ha='left', bbox=dict(boxstyle='round,pad=0.3', facecolor='#ff2d55', edgecolor='none'))
+    # ENTRY
+    ax.axhline(y=entry_px, color='#00e5ff', linestyle='--', linewidth=1.5, alpha=0.9, zorder=6)
+    ax.text(n + 0.6, entry_px, f" ENTRY {entry_px:.5g} ", color='#0b0e14', fontsize=9, fontweight='bold',
+            va='center', ha='left', bbox=dict(boxstyle='round,pad=0.32', facecolor='#00e5ff', edgecolor='none'), zorder=7)
 
-    if prev_low:
-        ax.axhline(y=prev_low, color='#ab47bc', linestyle='-.', linewidth=1.2, alpha=0.7)
-        ax.text(n + 0.8, prev_low, f" SWEPT  {prev_low:.6g} ", color='#ffffff', fontsize=8,
-                va='center', ha='left', bbox=dict(boxstyle='round,pad=0.2', facecolor='#7b1fa2', edgecolor='none', alpha=0.8))
+    # STOP LOSS
+    if stop_px and stop_px > 0:
+        ax.axhline(y=stop_px, color='#ff2d55', linestyle=':', linewidth=1.5, alpha=0.9, zorder=6)
+        sl_pct = ((stop_px - entry_px) / entry_px) * 100
+        ax.text(n + 0.6, stop_px, f" SL {stop_px:.5g} (+{sl_pct:.1f}%) ", color='#ffffff', fontsize=9, fontweight='bold',
+                va='center', ha='left', bbox=dict(boxstyle='round,pad=0.32', facecolor='#d32f2f', edgecolor='none'), zorder=7)
 
-    if exit_px:
-        exit_col = '#26a69a' if exit_px > entry_px else '#ef5350'
-        ax.axhline(y=exit_px, color=exit_col, linestyle='-', linewidth=1.8, alpha=0.9)
-        exit_text = f" EXIT  {exit_px:.6g} "
+    # TAKE PROFIT (Render if within visible chart bounds)
+    if tp_px and tp_px > 0:
+        tp_pct = ((entry_px - tp_px) / entry_px) * 100
+        if tp_px >= y_min:
+            ax.axhline(y=tp_px, color='#00e676', linestyle='-.', linewidth=1.5, alpha=0.9, zorder=6)
+            ax.text(n + 0.6, tp_px, f" TP 1:2 {tp_px:.5g} (-{tp_pct:.1f}%) ", color='#ffffff', fontsize=9, fontweight='bold',
+                    va='center', ha='left', bbox=dict(boxstyle='round,pad=0.32', facecolor='#2e7d32', edgecolor='none'), zorder=7)
+
+    # EXIT (if closed)
+    if exit_px and exit_px > 0:
+        exit_col = '#00e676' if exit_px < entry_px else '#ff2d55'
+        ax.axhline(y=exit_px, color=exit_col, linestyle='-', linewidth=1.8, alpha=0.95, zorder=6)
+        exit_text = f" EXIT {exit_px:.5g} "
         if exit_reason: exit_text += f"({exit_reason}) "
-        ax.text(n + 0.8, exit_px, exit_text, color='#ffffff', fontsize=9, fontweight='bold',
-                va='center', ha='left', bbox=dict(boxstyle='round,pad=0.3', facecolor=exit_col, edgecolor='none'))
+        ax.text(n + 0.6, exit_px, exit_text, color='#ffffff', fontsize=9, fontweight='bold',
+                va='center', ha='left', bbox=dict(boxstyle='round,pad=0.32', facecolor=exit_col, edgecolor='none'), zorder=7)
 
+    # Header Titles
     status_str = f"CLOSED ({exit_reason})" if exit_px else "ACTIVE IN-POSITION"
     pnl_str = ""
     if exit_px:
-        pnl = ((exit_px - entry_px) / entry_px) * 100
-        pnl_str = f"  |  PnL: {pnl:+.2f}%"
+        pnl = ((entry_px - exit_px) / entry_px) * 100
+        pnl_str = f"  |  Realized PnL: {pnl:+.2f}%"
 
-    title_main = f"{coin}/USDT — 15m Vol2b2t Setup [{status_str}]"
-    title_sub = f"Entry: {entry_px:.6g}   SL: {stop_px:.6g}{pnl_str}"
+    title_main = f"[SHORT] {coin}/USDT — {tf.upper()} {title_tag} [{status_str}]"
+    title_sub = f"Entry: {entry_px:.5g}   SL: {stop_px:.5g}" + (f"   TP: {tp_px:.5g}" if tp_px else "") + pnl_str
 
-    ax.set_title(f"{title_main}\n{title_sub}", fontsize=13, color='#ffffff', fontweight='bold', pad=12, loc='left')
-    ax.set_ylabel("Price (USDT)", fontsize=10, color='#787b86')
-    ax_vol.set_ylabel("Volume", fontsize=10, color='#787b86')
+    ax.set_title(f"{title_main}\n{title_sub}", fontsize=12.5, color='#ffffff', fontweight='bold', pad=12, loc='left')
+    ax.set_ylabel("Price (USDT)", fontsize=9.5, color='#8b949e')
+    ax_vol.set_ylabel("Volume", fontsize=9.5, color='#8b949e')
 
-    ax.legend(facecolor=card_color, edgecolor=grid_color, labelcolor='#ffffff', loc='upper left')
-    ax_vol.legend(facecolor=card_color, edgecolor=grid_color, labelcolor='#ffffff', loc='upper left')
+    ax.legend(facecolor=card_color, edgecolor=grid_color, labelcolor='#c9d1d9', loc='upper left', fontsize=8.5)
+    ax_vol.legend(facecolor=card_color, edgecolor=grid_color, labelcolor='#c9d1d9', loc='upper left', fontsize=8.5)
 
     for a in [ax, ax_vol]:
         for spine in a.spines.values():
             spine.set_color(grid_color)
-        a.tick_params(colors='#787b86')
+        a.tick_params(colors='#8b949e', labelsize=8.5)
 
-    step = max(1, n // 8)
+    # Date + Time formatting on X axis
+    step = max(1, n // 7)
     tick_positions = list(range(0, n, step))
-    tick_labels = [df['time'].iloc[i].strftime('%H:%M') for i in tick_positions]
+    tick_labels = [df['time'].iloc[i].strftime('%d %b %H:%M') for i in tick_positions]
     ax_vol.set_xticks(tick_positions)
-    ax_vol.set_xticklabels(tick_labels, color='#787b86', fontsize=9)
-
-    ax.set_xlim(-1, n + 9)
+    ax_vol.set_xticklabels(tick_labels, color='#8b949e', fontsize=8.5)
 
     plt.tight_layout()
     buf = io.BytesIO()
@@ -275,60 +318,91 @@ def _multipart(fields, files):
     out += ("--%s--\r\n" % bnd).encode()
     return out, bnd
 
-def post_entry(token, chat, base, bias, entry, sl, tp, risk_pct, k=None, account="CoinDCX Live", lookback=3, tf="15m", prev_low=None):
-    """Render + sendPhoto. Returns the Telegram message_id (to reply to on exit), or None."""
+def post_entry(token, chat, base, bias, entry, sl, tp, risk_pct, k=None, account="CoinDCX Live", lookback=3, tf="4h", prev_low=None):
+    """Render + sendPhoto. Returns the Telegram message_id (or dict of msg_ids) to reply to on exit."""
+    chats = [c.strip() for c in str(chat).split(",") if c.strip()]
+    if not chats:
+        return None
     try:
-        png = render_chart_bytes(base, entry, sl, prev_low=prev_low)
+        tag_name = "DumpRide 4H" if "DUMPRIDE" in str(account).upper() else ("FibVOL" if "FIBVOL" in str(account).upper() else "2b2t")
+        png = render_chart_bytes(base, entry, sl, tp_px=tp, prev_low=prev_low, tf=tf, title_tag=tag_name)
         if not png and k is not None:
             png = _render(base, bias, entry, sl, tp, k, lookback, tf)
 
-        emoji = "🚀" if bias == "long" else "📉"
-        tag = "FIBVOL" if "FIBVOL" in str(account).upper() else "2B2T"
+        emoji = "📉" if bias == "short" else "🚀"
+        tag = "DUMPRIDE 4H" if "DUMPRIDE" in str(account).upper() else ("FIBVOL" if "FIBVOL" in str(account).upper() else "2B2T")
         cap = (f"{emoji} {tag} ENTRY — {base}/USDT ({account})\n"
-               f"Entry: {entry:.6g} | SL: {sl:.6g} | 2% Trailing SL Active\n"
+               f"Entry: {entry:.6g} | SL: {sl:.6g} | TP: {tp:.6g}\n"
                f"Risk: {risk_pct*100:.2f}% | TF: {tf}")
-        fields = {"chat_id": str(chat), "caption": cap}
-        files = {"photo": ("setup.png", png)} if png else {}
-        if not png:
-            data = urllib.parse.urlencode({"chat_id": str(chat), "text": cap}).encode()
-            req = urllib.request.Request(API % (token, "sendMessage"), data=data)
-        else:
-            body, bnd = _multipart(fields, files)
-            req = urllib.request.Request(API % (token, "sendPhoto"), data=body,
-                                         headers={"Content-Type": "multipart/form-data; boundary=%s" % bnd})
-        resp = json.load(urllib.request.urlopen(req, timeout=20))
-        return resp.get("result", {}).get("message_id") if resp.get("ok") else None
+        
+        msg_ids = {}
+        for cid in chats:
+            try:
+                fields = {"chat_id": str(cid), "caption": cap}
+                files = {"photo": ("setup.png", png)} if png else {}
+                if not png:
+                    data = urllib.parse.urlencode({"chat_id": str(cid), "text": cap}).encode()
+                    req = urllib.request.Request(API % (token, "sendMessage"), data=data)
+                else:
+                    body, bnd = _multipart(fields, files)
+                    req = urllib.request.Request(API % (token, "sendPhoto"), data=body,
+                                                 headers={"Content-Type": "multipart/form-data; boundary=%s" % bnd})
+                resp = json.load(urllib.request.urlopen(req, timeout=15))
+                if resp.get("ok"):
+                    msg_ids[str(cid)] = resp.get("result", {}).get("message_id")
+            except Exception as ce:
+                print(f"Error posting entry to chat {cid}: {ce}")
+                
+        return msg_ids if len(chats) > 1 else (list(msg_ids.values())[0] if msg_ids else None)
     except Exception as e:
         print("Telegram post_entry error:", e)
         return None
 
-def post_exit(token, chat, reply_to_msg_id, base, bias, reason, exit_px, r, pnl, account="CoinDCX Live", entry=0, sl=0, prev_low=None):
+def post_exit(token, chat, reply_to_msg_id, base, bias, reason, exit_px, r, pnl, account="CoinDCX Live", entry=0, sl=0, tp=0, prev_low=None, tf="4h"):
     """Render exit chart & sendPhoto as a direct REPLY to entry message."""
+    chats = [c.strip() for c in str(chat).split(",") if c.strip()]
+    if not chats:
+        return False
     try:
         win = r > 0
         emoji = "✅" if win else "❌"
         txt = (f"{emoji} EXIT {reason} — {base}/USDT ({account})\n"
                f"Exit: {exit_px:.6g} | Return: {r:+.2f}R | PnL: ${pnl:+.2f}")
         
-        png = render_chart_bytes(base, entry, sl, exit_px=exit_px, exit_reason=reason, prev_low=prev_low) if entry > 0 else None
+        tag_name = "DumpRide 4H" if "DUMPRIDE" in str(account).upper() else ("FibVOL" if "FIBVOL" in str(account).upper() else "2b2t")
+        png = render_chart_bytes(base, entry, sl, tp_px=tp, exit_px=exit_px, exit_reason=reason, prev_low=prev_low, tf=tf, title_tag=tag_name) if entry > 0 else None
         
-        fields = {"chat_id": str(chat), "caption": txt}
-        if reply_to_msg_id:
-            fields["reply_to_message_id"] = str(reply_to_msg_id)
+        success = False
+        for cid in chats:
+            try:
+                rep_id = None
+                if isinstance(reply_to_msg_id, dict):
+                    rep_id = reply_to_msg_id.get(str(cid))
+                elif isinstance(reply_to_msg_id, (int, str)):
+                    rep_id = reply_to_msg_id
+                    
+                fields = {"chat_id": str(cid), "caption": txt}
+                if rep_id:
+                    fields["reply_to_message_id"] = str(rep_id)
 
-        if png:
-            files = {"photo": ("exit.png", png)}
-            body, bnd = _multipart(fields, files)
-            req = urllib.request.Request(API % (token, "sendPhoto"), data=body,
-                                         headers={"Content-Type": "multipart/form-data; boundary=%s" % bnd})
-        else:
-            data_dict = {"chat_id": str(chat), "text": txt}
-            if reply_to_msg_id: data_dict["reply_to_message_id"] = str(reply_to_msg_id)
-            data = urllib.parse.urlencode(data_dict).encode()
-            req = urllib.request.Request(API % (token, "sendMessage"), data=data)
+                if png:
+                    files = {"photo": ("exit.png", png)}
+                    body, bnd = _multipart(fields, files)
+                    req = urllib.request.Request(API % (token, "sendPhoto"), data=body,
+                                                 headers={"Content-Type": "multipart/form-data; boundary=%s" % bnd})
+                else:
+                    data_dict = {"chat_id": str(cid), "text": txt}
+                    if rep_id: data_dict["reply_to_message_id"] = str(rep_id)
+                    data = urllib.parse.urlencode(data_dict).encode()
+                    req = urllib.request.Request(API % (token, "sendMessage"), data=data)
 
-        resp = json.load(urllib.request.urlopen(req, timeout=20))
-        return bool(resp.get("ok"))
+                resp = json.load(urllib.request.urlopen(req, timeout=15))
+                if resp.get("ok"):
+                    success = True
+            except Exception as ce:
+                print(f"Error posting exit to chat {cid}: {ce}")
+                
+        return success
     except Exception as e:
         print("Telegram post_exit error:", e)
         return False

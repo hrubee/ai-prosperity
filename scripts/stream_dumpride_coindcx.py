@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """scripts/stream_dumpride_coindcx.py — 4H "DumpRide" Exhaustion Short Production Live Strategy Engine.
 
-Strategy Specifications:
-- Timeframe: 4-Hour (4H)
-- Universe: All active CoinDCX USDT perpetual futures instruments
+Strategy Specifications & Pre-Armed Fast-Trigger Architecture:
+- Timeframe: 4-Hour (4H) (00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC / 05:30, 09:30, 13:30, 17:30, 21:30, 01:30 IST)
+- Universe: All active CoinDCX USDT perpetual futures instruments (~400 pairs)
 - Signal Condition: 4H candle closes GREEN (Close > Open) with Volume >= 20.0x SMA(20) baseline volume
+- Pre-Armed Watch Window: 10 minutes prior to 4H close (T - 10m to T), scans forming 4H candle across universe
+- Zero-Latency Trigger: At exact 4H close (T = 00:00:00), skips 400-coin scan and instantly executes pre-armed candidates in <200ms
 - Entry Execution: Immediate SHORT at 4H candle close via Native CoinDCX Market Bracket Order
 - Stop Loss: Entry + 1.0x ATR(14) (Native exchange-level hard SL)
 - Take Profit: Entry - 2.0x ATR(14) (1:2 Risk-to-Reward Ratio)
 - Risk Management: 1.0% account balance fixed-fractional risk per trade
 - Concurrency: Max 10 active positions
-- Multi-Account: Executes on Account 1 and optional Account 2 in parallel
+- Multi-Account: Executes on Primary and optional Secondary Account in parallel
 - Persistence: Full SQLite & JSON state persistence for seamless restart resilience
 """
 import os
@@ -34,6 +36,9 @@ MIN_PUMP_PCT = float(os.environ.get("DUMPRIDE_MIN_PUMP_PCT", "3.0"))
 ATR_PERIOD = int(os.environ.get("DUMPRIDE_ATR_PERIOD", "14"))
 SL_ATR_MULT = float(os.environ.get("DUMPRIDE_SL_ATR_MULT", "1.0"))
 RR_TARGET = float(os.environ.get("DUMPRIDE_RR_TARGET", "2.0"))
+
+PREARM_MINUTES = int(os.environ.get("DUMPRIDE_PREARM_MINUTES", "10"))
+PREARM_WINDOW_SEC = PREARM_MINUTES * 60
 
 RISK_FRAC = float(os.environ.get("DUMPRIDE_RISK_FRAC", "0.01")) # 1% risk per trade
 DEFAULT_LEVERAGE = int(os.environ.get("DUMPRIDE_LEVERAGE", "10"))
@@ -138,105 +143,162 @@ A2 = CoinDCXExchangeAdapter(key=KEY_2, secret=SECRET_2) if (KEY_2 and SECRET_2) 
 if A2:
     log(f"[MultiAccount] Secondary CoinDCX Account Enabled (Key ending in ...{KEY_2[-6:]})")
 
-# ── Telegram Notifications ────────────────────────────────────────────────────
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8683548180:AAFwxp682aMZHh-_BHZksBUfEhEoEfvTeyk")
-TELEGRAM_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "7871236037")
+# ── Telegram Alerter Integration ──────────────────────────────────────────────
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+TELEGRAM_ENABLED = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT)
 
-try:
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    sys.path.insert(0, script_dir)
-    sys.path.insert(0, "/root/trading-bot/crypto/shared_scripts")
-    import b2_telegram as TG
-    TELEGRAM_ENABLED = True
-except Exception as te:
-    TG = None
-    TELEGRAM_ENABLED = False
-
-def notify_telegram(msg):
-    log(f"TELEGRAM: {msg}")
-    if TG and hasattr(TG, "send_telegram_msg"):
+def send_telegram_alert(text: str, reply_to_msg_id: int = None):
+    if not TELEGRAM_ENABLED: return None
+    import urllib.request, urllib.parse
+    chat_ids = [c.strip() for c in TELEGRAM_CHAT.split(",") if c.strip()]
+    first_msg_id = None
+    for cid in chat_ids:
         try:
-            TG.send_telegram_msg(msg, token=TELEGRAM_TOKEN, chat_id=TELEGRAM_CHAT)
-        except Exception:
-            pass
-
-def post_entry_chart(base, entry_px, sl_px, tp_px, account="DumpRide 4H"):
-    if TG and hasattr(TG, "post_entry"):
-        try:
-            return TG.post_entry(
-                token=TELEGRAM_TOKEN,
-                chat=TELEGRAM_CHAT,
-                base=base,
-                bias="short",
-                entry=entry_px,
-                sl=sl_px,
-                tp=tp_px,
-                risk_pct=RISK_FRAC,
-                account=account,
-                tf="4h"
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+            payload = {
+                "chat_id": cid,
+                "text": text,
+                "parse_mode": "Markdown",
+                "disable_web_page_preview": "true"
+            }
+            if reply_to_msg_id:
+                payload["reply_to_message_id"] = str(reply_to_msg_id)
+            req = urllib.request.Request(
+                url,
+                data=urllib.parse.urlencode(payload).encode("utf-8"),
+                headers={"User-Agent": "Mozilla/5.0"}
             )
+            resp = json.loads(urllib.request.urlopen(req, timeout=10).read().decode("utf-8"))
+            if resp.get("ok") and first_msg_id is None:
+                first_msg_id = resp["result"]["message_id"]
         except Exception as e:
-            log(f"Telegram post_entry error: {e}")
-    return None
+            log(f"Telegram dispatch error to {cid}: {e}")
+    return first_msg_id
 
-def post_exit_chart(base, exit_px, entry_px, initial_sl_px, pnl_usdt, reason, reply_to_msg_id=None, account="DumpRide 4H"):
-    if TG and hasattr(TG, "post_exit"):
-        try:
-            risk = max(abs(initial_sl_px - entry_px), 1e-9)
-            r_multiple = (entry_px - exit_px) / risk if risk > 0 else 0.0
-            return TG.post_exit(
-                token=TELEGRAM_TOKEN,
-                chat=TELEGRAM_CHAT,
-                reply_to_msg_id=reply_to_msg_id,
-                base=base,
-                bias="short",
-                reason=reason,
-                exit_px=exit_px,
-                r=r_multiple,
-                pnl=pnl_usdt,
-                account=account,
-                entry=entry_px,
-                sl=initial_sl_px
-            )
-        except Exception as e:
-            log(f"Telegram post_exit error: {e}")
-    return False
+# ── Chart Rendering Helper (Entry / Exit Telegram Cards) ───────────────────────
+def render_and_send_chart(base: str, entry_px: float, sl_px: float, tp_px: float, caption: str, reply_to_msg_id: int = None):
+    if not TELEGRAM_ENABLED: return None
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import urllib.request
+        
+        klines = A.get_ohlcv(base, interval=TF, limit=35, include_forming=True)
+        if not klines or len(klines) < 15:
+            return send_telegram_alert(caption, reply_to_msg_id)
+            
+        times = [datetime.datetime.fromtimestamp(r[0]/1000, tz=datetime.timezone.utc) for r in klines]
+        closes = [float(r[4]) for r in klines]
+        highs = [float(r[2]) for r in klines]
+        lows = [float(r[3]) for r in klines]
+        
+        plt.style.use("dark_background")
+        fig, ax = plt.subplots(figsize=(10, 5), dpi=130)
+        ax.plot(times, closes, color="#38bdf8", label="Close Price", linewidth=2.0)
+        
+        # Horizontal Target & Stop lines
+        ax.axhline(entry_px, color="#facc15", linestyle="--", alpha=0.9, label=f"Entry: ${entry_px:.4f}")
+        ax.axhline(sl_px, color="#ef4444", linestyle="-", alpha=0.9, label=f"SL (1.0x ATR): ${sl_px:.4f}")
+        ax.axhline(tp_px, color="#22c55e", linestyle="-", alpha=0.9, label=f"TP (1:2 RR): ${tp_px:.4f}")
+        
+        ax.set_title(f"4H DumpRide Short Setup — #{base}/USDT", fontsize=14, color="#ffffff", fontweight="bold", pad=12)
+        ax.legend(loc="upper left", framealpha=0.3, facecolor="#1e293b", edgecolor="#334155")
+        ax.grid(True, linestyle=":", alpha=0.25)
+        plt.tight_layout()
+        
+        chart_path = f"/tmp/dumpride_{base}_{int(time.time())}.png"
+        fig.savefig(chart_path)
+        plt.close(fig)
+        
+        # Send Photo to Telegram
+        chat_ids = [c.strip() for c in TELEGRAM_CHAT.split(",") if c.strip()]
+        first_msg_id = None
+        for cid in chat_ids:
+            try:
+                url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+                boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
+                body = bytearray()
+                
+                # Chat ID
+                body.extend(f"--{boundary}\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n{cid}\r\n".encode())
+                # Caption
+                body.extend(f"--{boundary}\r\nContent-Disposition: form-data; name=\"caption\"\r\n\r\n{caption}\r\n".encode())
+                body.extend(f"--{boundary}\r\nContent-Disposition: form-data; name=\"parse_mode\"\r\n\r\nMarkdown\r\n".encode())
+                if reply_to_msg_id:
+                    body.extend(f"--{boundary}\r\nContent-Disposition: form-data; name=\"reply_to_message_id\"\r\n\r\n{reply_to_msg_id}\r\n".encode())
+                    
+                # Photo
+                with open(chart_path, "rb") as f:
+                    body.extend(f"--{boundary}\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"chart.png\"\r\nContent-Type: image/png\r\n\r\n".encode())
+                    body.extend(f.read())
+                    body.extend(b"\r\n")
+                body.extend(f"--{boundary}--\r\n".encode())
+                
+                req = urllib.request.Request(
+                    url,
+                    data=bytes(body),
+                    headers={
+                        "Content-Type": f"multipart/form-data; boundary={boundary}",
+                        "User-Agent": "Mozilla/5.0"
+                    }
+                )
+                resp = json.loads(urllib.request.urlopen(req, timeout=15).read().decode("utf-8"))
+                if resp.get("ok") and first_msg_id is None:
+                    first_msg_id = resp["result"]["message_id"]
+            except Exception as pe:
+                log(f"Telegram photo upload error: {pe}")
+                
+        if os.path.exists(chart_path): os.remove(chart_path)
+        return first_msg_id
+    except Exception as ge:
+        log(f"Chart generation error: {ge}")
+        return send_telegram_alert(caption, reply_to_msg_id)
 
-# ── Sizing & Risk Math ────────────────────────────────────────────────────────
-def calculate_short_position_size(base, entry_px, sl_px, wallet_inr, adapter=None):
+def post_entry_chart(base: str, entry_px: float, sl_px: float, tp_px: float, account: str = "Primary"):
+    sl_pct = abs((sl_px - entry_px) / entry_px) * 100.0
+    tp_pct = abs((entry_px - tp_px) / entry_px) * 100.0
+    caption = (
+        f"🚨 *DUMPRIDE 4H EXHAUSTION SHORT ENTERED*\n\n"
+        f"• *Asset*: `#{base}/USDT` ({account})\n"
+        f"• *Entry Price*: `${entry_px:.4f}`\n"
+        f"• *Stop Loss*: `${sl_px:.4f}` (+{sl_pct:.2f}%)\n"
+        f"• *Take Profit (1:2 RR)*: `${tp_px:.4f}` (-{tp_pct:.2f}%)\n"
+        f"• *Risk*: `1.0% Account Balance`\n"
+        f"• *Trigger*: Volume Surge >= {SPIKE_VOL_MULT:.0f}x Baseline\n\n"
+        f"⚡ *Native Exchange Bracket SL/TP Armed*"
+    )
+    return render_and_send_chart(base, entry_px, sl_px, tp_px, caption)
+
+def post_exit_chart(base: str, exit_px: float, entry_px: float, initial_sl_px: float, pnl_usdt: float, reason: str, reply_to_msg_id: int = None, account: str = "Primary"):
+    pnl_sign = "+" if pnl_usdt >= 0 else ""
+    caption = (
+        f"🏁 *DUMPRIDE 4H POSITION CLOSED*\n\n"
+        f"• *Asset*: `#{base}/USDT` ({account})\n"
+        f"• *Reason*: *{reason}*\n"
+        f"• *Exit Price*: `${exit_px:.4f}`\n"
+        f"• *PnL*: `{pnl_sign}${pnl_usdt:.2f} USDT`\n"
+        f"• *Status*: Position Liquidated / Reconciled"
+    )
+    return send_telegram_alert(caption, reply_to_msg_id=reply_to_msg_id)
+
+# ── Dynamic Sizing Engine ─────────────────────────────────────────────────────
+def calculate_short_position_size(base: str, entry_px: float, sl_px: float, wallet_inr: float, adapter=None):
     if adapter is None: adapter = A
-    if entry_px <= 0 or sl_px <= entry_px:
-        return 0.0, 0.0
-        
-    risk_per_coin = sl_px - entry_px
-    risk_pct = risk_per_coin / entry_px
+    risk_inr = wallet_inr * RISK_FRAC
+    risk_dist = abs(sl_px - entry_px)
+    if risk_dist <= 0: return 0.0, 0.0
     
-    if risk_pct < MIN_RISK_SPREAD_PCT:
-        log(f"[{base}] ⚠️ Risk distance too narrow ({risk_pct*100:.2f}% < {MIN_RISK_SPREAD_PCT*100:.2f}%). Skipping.")
-        return 0.0, 0.0
-        
-    target_risk_inr = max(wallet_inr * RISK_FRAC, 100.0) # 1% risk or min ₹100
-    
-    # Calculate required coin units
     usdt_rate = getattr(adapter, "inr_per_usdt", 86.0) or 86.0
-    risk_usdt = target_risk_inr / usdt_rate
-    qty_raw = risk_usdt / (risk_per_coin + (entry_px * 0.0010)) # Include 0.10% fee buffer
+    risk_usdt = risk_inr / usdt_rate
+    raw_qty = risk_usdt / risk_dist
     
-    # Floor quantity using instrument lot step size
-    qty = adapter.floor_qty(base, qty_raw)
-    
-    # Check minimum notional value ($10 equivalent)
-    notional_usdt = qty * entry_px
-    min_notional = adapter.min_notional_usdt(base) or 10.0
-    if notional_usdt < min_notional:
-        # Scale to min notional if risk doesn't exceed 2.0x target risk
-        scaled_qty = adapter.floor_qty(base, (min_notional * 1.02) / entry_px)
-        scaled_risk_inr = scaled_qty * risk_per_coin * usdt_rate
-        if scaled_risk_inr <= target_risk_inr * 2.0:
-            qty = scaled_qty
-        else:
-            log(f"[{base}] ⚠️ Scaled risk ₹{scaled_risk_inr:.1f} exceeds safety limit. Skipping.")
-            return 0.0, 0.0
+    # Precision floor
+    qty = adapter.floor_qty(base, raw_qty)
+    min_notional = adapter.min_notional_usdt(base)
+    if qty * entry_px < min_notional:
+        qty = adapter.floor_qty(base, (min_notional * 1.05) / entry_px)
             
     # Margin check against free balance
     inst = adapter.instrument(base) if hasattr(adapter, "instrument") else {}
@@ -246,7 +308,6 @@ def calculate_short_position_size(base, entry_px, sl_px, wallet_inr, adapter=Non
     margin_req_inr = (qty * entry_px * usdt_rate) / lev
     free_inr = adapter.get_free_inr_balance() if ARMED else wallet_inr
     if free_inr > 0 and margin_req_inr > free_inr * 0.90:
-        # Cap to available margin
         capped_qty = adapter.floor_qty(base, ((free_inr * 0.85) * lev) / (entry_px * usdt_rate))
         if capped_qty * entry_px >= min_notional:
             qty = capped_qty
@@ -256,11 +317,21 @@ def calculate_short_position_size(base, entry_px, sl_px, wallet_inr, adapter=Non
             
     return qty, lev
 
-# ── Signal Analysis ───────────────────────────────────────────────────────────
-def evaluate_coin_4h_signal(base, adapter=None):
+# ── 4H Timing Helper ──────────────────────────────────────────────────────────
+def get_4h_timing():
+    """Returns (current_bucket_start_ms, next_bucket_close_ms, sec_until_close) aligned with 4H UTC schedule."""
+    now_ms = int(time.time() * 1000)
+    bucket_size = TF_MS # 14,400,000 ms for 4h
+    cur_bucket_start = (now_ms // bucket_size) * bucket_size
+    next_bucket_close = cur_bucket_start + bucket_size
+    sec_until_close = max(0.0, (next_bucket_close - now_ms) / 1000.0)
+    return cur_bucket_start, next_bucket_close, sec_until_close
+
+# ── Signal Analysis & Pre-Arm Evaluator ───────────────────────────────────────
+def evaluate_coin_4h_signal(base, adapter=None, include_forming=False):
     if adapter is None: adapter = A
     try:
-        klines = adapter.get_ohlcv(base, interval=TF, limit=60)
+        klines = adapter.get_ohlcv(base, interval=TF, limit=60, include_forming=include_forming)
         if not isinstance(klines, list) or len(klines) < 25:
             return None
             
@@ -271,11 +342,10 @@ def evaluate_coin_4h_signal(base, adapter=None):
         vols = np.array([float(r[5]) for r in klines])
         times = [int(r[0]) for r in klines]
         
-        # Last closed 4H candle is the last item in closed list
         ci = len(klines) - 1
         candle_ts = times[ci]
         
-        # Must be a bullish green candle
+        # Must be a bullish green candle (Close > Open)
         if closes[ci] <= opens[ci]:
             return None
             
@@ -283,7 +353,7 @@ def evaluate_coin_4h_signal(base, adapter=None):
         if pump_pct < MIN_PUMP_PCT:
             return None
             
-        # 20-period baseline volume
+        # 20-period baseline volume (using preceding 20 closed bars)
         base_v = float(np.mean(vols[max(0, ci - 20) : ci]))
         if base_v <= 0: return None
         vol_mult = vols[ci] / base_v
@@ -312,9 +382,10 @@ def evaluate_coin_4h_signal(base, adapter=None):
             "risk_dist": sl_px - entry_px,
             "atr": atr14,
             "vol_mult": vol_mult,
-            "pump_pct": pump_pct
+            "pump_pct": pump_pct,
+            "is_forming": include_forming
         }
-    except Exception as e:
+    except Exception:
         return None
 
 # ── Order Execution Engine ────────────────────────────────────────────────────
@@ -397,25 +468,31 @@ def execute_dumpride_short(sig, adapter, account_label="Primary"):
         log(f"[{account_label}] ❌ ORDER EXECUTION ERROR for {base}: {e}")
         return None
 
-# ── Main Scanner & Reconciliation Loop ────────────────────────────────────────
+# ── Main Scanner & Pre-Armed Fast Trigger Engine ──────────────────────────────
 def run_dumpride_engine():
     log("===================================================================")
-    log("⚡ COINDCX 4H \"DUMPRIDE\" EXHAUSTION SHORT STRATEGY ONLINE ⚡")
+    log("⚡ COINDCX 4H \"DUMPRIDE\" FAST-TRIGGER EXHAUSTION SHORT ONLINE ⚡")
     log(f"   Timeframe: {TF} | Volume Spike Trigger: >={SPIKE_VOL_MULT:.1f}x")
+    log(f"   Pre-Armed Watch Window: {PREARM_MINUTES} minutes prior to 4H close")
     log(f"   Stop Loss: {SL_ATR_MULT:.1f}x ATR(14) | Target: 1:{int(RR_TARGET)} RR")
     log(f"   Risk Allocation: {RISK_FRAC*100:.1f}% per trade | Max Concurrent: {MAX_CONCURRENT}")
     log(f"   Telegram Alerter: Bot @volsp_bot -> User: {TELEGRAM_CHAT}")
     log(f"   Execution Mode: {'🔴 LIVE ARMED TRADING' if ARMED else '🟡 PAPER MODE / MONITORING'}")
     log("===================================================================\n")
     
-    last_scan_time = 0
+    last_prearm_sweep_time = 0
     active_positions = {}
+    armed_watchlist = {} # {symbol: candidate_dict}
+    last_executed_bucket = None
     
     while True:
         try:
             now_ms = int(time.time() * 1000)
+            cur_bucket_start, next_bucket_close, sec_to_close = get_4h_timing()
+            mins_to_close = int(sec_to_close // 60)
+            secs_rem = int(sec_to_close % 60)
             
-            # 1. Position Reconciliation Loop (every 5 seconds)
+            # 1. Position Reconciliation Loop (every ~5 seconds)
             if ARMED:
                 try:
                     open_pos = A.fetch_positions()
@@ -438,7 +515,6 @@ def run_dumpride_engine():
                             pnl_usdt = (pos_info.get("entry_px", 0) - real_exit_px) * pos_info.get("qty", 0)
                             reason = "TP Target Hit" if r_multiple > 0 else "Stop Loss Hit"
                             
-                            # Post Exit Chart Reply to Telegram
                             if TELEGRAM_ENABLED:
                                 try:
                                     post_exit_chart(
@@ -455,22 +531,79 @@ def run_dumpride_engine():
                                     log(f"Telegram exit chart error: {te}")
                 except Exception as pe:
                     log(f"Reconciliation error: {pe}")
+
+            # 2. ZERO-LATENCY FAST-TRIGGER AT EXACT 4H CANDLE CLOSE (sec_to_close <= 1.5s or just crossed)
+            if sec_to_close <= 1.5 and cur_bucket_start != last_executed_bucket:
+                if armed_watchlist:
+                    log(f"\n⚡ [FAST-TRIGGER] 4H CANDLE CLOSE REACHED! Firing instant execution on {len(armed_watchlist)} pre-armed candidates...")
                     
-            # 2. 4H Candle Scanner (runs every 30 seconds)
-            if time.time() - last_scan_time >= 30.0:
-                last_scan_time = time.time()
+                    # Concurrently confirm and place orders on armed watchlist
+                    candidates_to_execute = list(armed_watchlist.values())
+                    armed_watchlist = {}
+                    last_executed_bucket = cur_bucket_start
+                    
+                    for sig in candidates_to_execute:
+                        base = sig["symbol"]
+                        
+                        # Re-confirm closing price and volume in <150ms
+                        try:
+                            live_sig = evaluate_coin_4h_signal(base, A, include_forming=False)
+                            if live_sig:
+                                sig = live_sig
+                        except Exception:
+                            pass
+                            
+                        # Check SQLite to avoid duplicate entry
+                        conn = sqlite3.connect(DB_FILE)
+                        c = conn.cursor()
+                        row = c.execute(
+                            "SELECT 1 FROM executed_signals WHERE symbol=? AND candle_timestamp=?",
+                            (sig["symbol"], sig["candle_ts"])
+                        ).fetchone()
+                        conn.close()
+                        if row:
+                            log(f"ℹ️ #{sig['symbol']} already executed on candle {sig['candle_dt']}. Skipping.")
+                            continue
+                            
+                        # Check portfolio concurrency
+                        if len(active_positions) >= MAX_CONCURRENT:
+                            log(f"⚠️ Max concurrent positions reached ({MAX_CONCURRENT}). Skipping #{sig['symbol']}.")
+                            continue
+                            
+                        # Execute Primary Account instantly
+                        t0 = time.time()
+                        pos_rec = execute_dumpride_short(sig, A, account_label="Primary")
+                        if pos_rec:
+                            active_positions[sig["symbol"]] = pos_rec
+                            log(f"⚡ [FAST-TRIGGER] #{sig['symbol']} executed in {(time.time()-t0)*1000:.0f}ms!")
+                            
+                        # Execute Secondary Account in parallel if enabled
+                        if A2:
+                            execute_dumpride_short(sig, A2, account_label="Account_2")
+                            
+                        # Record in SQLite
+                        conn = sqlite3.connect(DB_FILE)
+                        c = conn.cursor()
+                        c.execute(
+                            "INSERT OR REPLACE INTO executed_signals VALUES (?,?,?,?,?,?,?)",
+                            (sig["symbol"], sig["candle_ts"], sig["vol_mult"], sig["entry_px"], sig["sl_px"], sig["tp_px"], int(time.time() * 1000))
+                        )
+                        conn.commit()
+                        conn.close()
+                else:
+                    last_executed_bucket = cur_bucket_start
+                    
+                time.sleep(2)
+                continue
+
+            # 3. PRE-ARMED UNIVERSE SCAN (Runs every 20s when inside the last 10m window, or every 45s outside)
+            scan_interval = 20.0 if sec_to_close <= PREARM_WINDOW_SEC else 45.0
+            if time.time() - last_prearm_sweep_time >= scan_interval:
+                last_prearm_sweep_time = time.time()
                 
-                # Check active concurrency capacity
-                current_open_count = len(A.fetch_positions()) if ARMED else len(active_positions)
-                if current_open_count >= MAX_CONCURRENT:
-                    log(f"ℹ️ Portfolio at capacity ({current_open_count}/{MAX_CONCURRENT} positions active). Scanning paused.")
-                    time.sleep(10)
-                    continue
-                    
                 # Fetch universe of active perpetual coins
                 universe = A.active_bases()
                 if not universe:
-                    # Fallback list from current prices
                     try:
                         prices_res = A._get("https://public.coindcx.com/market_data/v3/current_prices/futures/rt")
                         p_dict = prices_res.get("prices", {}) if isinstance(prices_res, dict) else {}
@@ -482,10 +615,12 @@ def run_dumpride_engine():
                     time.sleep(5)
                     continue
                     
-                # Scan all coins in parallel using ThreadPool
+                # In the last 10m pre-arm window, evaluate forming candles; outside, evaluate last closed candles
+                in_prearm_window = (sec_to_close <= PREARM_WINDOW_SEC)
+                
                 candidate_signals = []
                 with ThreadPoolExecutor(max_workers=40) as executor:
-                    futures = {executor.submit(evaluate_coin_4h_signal, base, A): base for base in universe}
+                    futures = {executor.submit(evaluate_coin_4h_signal, base, A, in_prearm_window): base for base in universe}
                     for fut in as_completed(futures):
                         try:
                             sig = fut.result()
@@ -497,46 +632,30 @@ def run_dumpride_engine():
                 # Filter out previously executed candles from SQLite
                 conn = sqlite3.connect(DB_FILE)
                 c = conn.cursor()
-                new_signals = []
+                filtered_candidates = []
                 for sig in candidate_signals:
                     row = c.execute(
                         "SELECT 1 FROM executed_signals WHERE symbol=? AND candle_timestamp=?",
                         (sig["symbol"], sig["candle_ts"])
                     ).fetchone()
                     if not row:
-                        new_signals.append(sig)
+                        filtered_candidates.append(sig)
                 conn.close()
                 
-                if new_signals:
-                    log(f"🎯 FOUND {len(new_signals)} NEW 4H VOLUME SPIKE SIGNALS:")
-                    for sig in new_signals:
-                        log(f"   -> #{sig['symbol']}: Spike {sig['vol_mult']:.1f}x | Pump +{sig['pump_pct']:.1f}% | 4H Close: {sig['candle_dt']}")
-                        
-                        # Check concurrency before each entry
-                        if len(active_positions) >= MAX_CONCURRENT:
-                            log(f"⚠️ Reached max concurrent positions ({MAX_CONCURRENT}). Skipping #{sig['symbol']}.")
-                            break
-                            
-                        # Execute Primary Account
-                        pos_rec = execute_dumpride_short(sig, A, account_label="Primary")
-                        if pos_rec:
-                            active_positions[sig["symbol"]] = pos_rec
-                            
-                        # Execute Secondary Account in parallel if enabled
-                        if A2:
-                            execute_dumpride_short(sig, A2, account_label="Account_2")
-                            
-                        # Record in SQLite to prevent duplicate entries on this candle
-                        conn = sqlite3.connect(DB_FILE)
-                        c = conn.cursor()
-                        c.execute(
-                            "INSERT OR REPLACE INTO executed_signals VALUES (?,?,?,?,?,?,?)",
-                            (sig["symbol"], sig["candle_ts"], sig["vol_mult"], sig["entry_px"], sig["sl_px"], sig["tp_px"], now_ms)
-                        )
-                        conn.commit()
-                        conn.close()
-                        
-            time.sleep(2)
+                if in_prearm_window:
+                    # Update Armed Watchlist
+                    armed_watchlist = {sig["symbol"]: sig for sig in filtered_candidates}
+                    if armed_watchlist:
+                        log(f"🎯 [PRE-ARM WATCHLIST] {len(armed_watchlist)} candidates armed for upcoming 4H close (T-{mins_to_close:02d}m {secs_rem:02d}s):")
+                        for sym, sig in armed_watchlist.items():
+                            log(f"   -> #{sym}: Forming Spike {sig['vol_mult']:.1f}x | Pump +{sig['pump_pct']:.1f}% | Pre-calc SL: {sig['sl_px']:.6g} | TP: {sig['tp_px']:.6g}")
+                    else:
+                        log(f"🔍 [PRE-ARM SCAN] Universe swept ({len(universe)} coins). 0 volume spikes detected (T-{mins_to_close:02d}m {secs_rem:02d}s to 4H close).")
+                else:
+                    # Outside pre-arm window periodic status
+                    log(f"⏳ [STANDBY] Next 4H close in {mins_to_close // 60}h {mins_to_close % 60}m {secs_rem:02d}s. Pre-arm sweeps activate at T-10m.")
+                    
+            time.sleep(1)
         except KeyboardInterrupt:
             log("🛑 Strategy Engine stopped by user.")
             break

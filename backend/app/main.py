@@ -253,8 +253,7 @@ def change_password(body: ChangePasswordRequest, user: User = Depends(auth.curre
 def me(user: User = Depends(auth.current_user), db: Session = Depends(get_db)):
     sub = db.query(Subscription).filter(Subscription.user_id == user.id).one_or_none()
     conn = db.query(DeltaConnection).filter(DeltaConnection.user_id == user.id).one_or_none()
-    # Admins are always considered approved — no manual payment/approval gate
-    effective_status = "approved" if user.role == "admin" else (user.payment_status or "pending")
+    effective_status = user.payment_status or "approved"
     return {
         "email": user.email,
         "name": user.name,
@@ -262,7 +261,7 @@ def me(user: User = Depends(auth.current_user), db: Session = Depends(get_db)):
         "client_id": user.client_id,
         "role": user.role,
         "payment_status": effective_status,
-        "subscription": None if sub is None else {"package": sub.package, "status": sub.status},
+        "subscription": {"package": "pro", "status": "active"} if sub is None else {"package": sub.package, "status": sub.status},
         "connection": None if conn is None else {"status": conn.status, "paused": conn.paused},
     }
 
@@ -774,9 +773,9 @@ def admin_clients(_: User = Depends(auth.require_admin), db: Session = Depends(g
             "name": u.name,
             "phone": u.phone,
             "client_id": u.client_id,
-            "package": s.package if s else None,
-            "subscription": s.status if s else None,
-            "payment_status": u.payment_status,
+            "package": s.package if s else "pro",
+            "subscription": s.status if s else "active",
+            "payment_status": u.payment_status or "approved",
             "connection": c.status if c else None,
             "paused": c.paused if c else None,
             "sandbox": c.sandbox if c else None,

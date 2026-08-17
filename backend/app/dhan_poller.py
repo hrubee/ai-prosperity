@@ -25,7 +25,7 @@ def get_dhan_headers(force_db_reload: bool = False):
                     DhanConnection.status == "connected",
                     DhanConnection.access_token_encrypted.isnot(None),
                     DhanConnection.access_token_encrypted != ""
-                ).order_by(DhanConnection.id.desc()).first()
+                ).order_by(DhanConnection.updated_at.desc()).first()
                 if conn and conn.access_token_encrypted:
                     token = decrypt_secret(conn.access_token_encrypted)
                     client_id = conn.client_id

@@ -41,8 +41,8 @@ class User(Base):
     phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
     client_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # Payment / Account approval status
-    payment_status: Mapped[str] = mapped_column(String(16), default="pending")  # pending | approved | rejected
+    # Payment / Account approval status (approved by default)
+    payment_status: Mapped[str] = mapped_column(String(16), default="approved")  # pending | approved | rejected
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     subscription: Mapped["Subscription | None"] = relationship(back_populates="user", uselist=False)
@@ -76,8 +76,8 @@ class Subscription(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
     dodo_subscription_id: Mapped[str | None] = mapped_column(String(128), index=True, nullable=True)
-    package: Mapped[str] = mapped_column(String(16))  # starter | growth | pro
-    status: Mapped[str] = mapped_column(String(32), default="pending")  # pending|active|on_hold|cancelled|failed|approved_waiting_connection
+    package: Mapped[str] = mapped_column(String(16), default="pro")  # starter | growth | pro
+    status: Mapped[str] = mapped_column(String(32), default="active")  # pending|active|on_hold|cancelled|failed|approved_waiting_connection
     current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
