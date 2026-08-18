@@ -98,6 +98,9 @@ export default function TradejiniConnectPage() {
                 <li>✓ Create a new app (any name)</li>
                 <li>✓ Copy the <b>API key</b> shown after creation</li>
               </ul>
+              <div className="rounded-xl border border-gold-500/40 bg-gold-500/10 p-3.5 text-xs sm:text-sm font-bold text-gold-400 leading-relaxed">
+                ⚠️ Your tradejini individual app may not be visible instantly. please do wait 5 minuts after adding the app
+              </div>
               <button className="btn-ghost w-full py-2.5 text-sm font-semibold" onClick={() => setStep(1)}>
                 I&apos;ve created the app →
               </button>
