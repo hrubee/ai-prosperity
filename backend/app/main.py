@@ -776,7 +776,7 @@ def admin_clients(_: User = Depends(auth.require_admin), db: Session = Depends(g
             try:
                 tok = tradejini_auth.ensure_client_token(db, t)
                 tjc = tradejini.TradejiniClient(tok, api_key=t.api_key)
-                buyable_cash = tjc.equity_inr()
+                buyable_cash = tjc.buyable_cash_inr()
             except Exception:
                 buyable_cash = None
 
@@ -870,7 +870,7 @@ def admin_client_detail(user_id: str, _: User = Depends(auth.require_admin), db:
         if tradejini_auth.has_auto_creds(tj_conn) and tj_conn.status != "disconnected" and not tj_conn.paused:
             try:
                 tjc = tradejini.TradejiniClient(tradejini_auth.ensure_client_token(db, tj_conn), api_key=tj_conn.api_key)
-                tj_equity = tjc.equity_inr()
+                tj_equity = tjc.buyable_cash_inr()
                 tj_positions = tjc.open_positions()
             except tradejini.TradejiniError as e:
                 tj_error = str(e)
