@@ -949,24 +949,41 @@ def admin_delete_client(user_id: str, _: User = Depends(auth.require_admin), db:
         raise HTTPException(status_code=404, detail="client not found")
     
     email = u.email
-    # Delete related rows across all tables (including straddle_positions, counters, connections)
-    for table_name in [
-        "straddle_positions",
-        "tradejini_connections",
-        "delta_connections",
-        "coindcx_connections",
-        "subscriptions",
-        "client_orders",
-        "payment_screenshots",
-        "entitlement_counters",
+    # Delete related rows across all tables safely with rollback protection
+    for model_cls in [
+        TradejiniConnection,
+        DeltaConnection,
+        CoinDCXConnection,
+        Subscription,
+        ClientOrder,
+        PaymentScreenshot,
+        EntitlementCounter,
+        StraddlePosition,
     ]:
         try:
-            db.execute(text(f"DELETE FROM {table_name} WHERE user_id = :uid"), {"uid": user_id})
+            db.query(model_cls).filter(model_cls.user_id == user_id).delete(synchronize_session=False)
+            db.flush()
         except Exception:
-            pass
+            db.rollback()
             
-    db.delete(u)
-    db.commit()
+    try:
+        u = db.get(User, user_id)
+        if u:
+            db.delete(u)
+            db.commit()
+    except Exception:
+        db.rollback()
+        u = db.get(User, user_id)
+        if u:
+            for rel in [u.subscription, u.connection, u.payment_screenshot]:
+                if rel:
+                    try:
+                        db.delete(rel)
+                    except Exception:
+                        pass
+            db.delete(u)
+            db.commit()
+
     return {"result": f"Client {email} permanently deleted"}
 
 
