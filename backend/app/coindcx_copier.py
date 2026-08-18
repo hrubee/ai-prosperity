@@ -16,7 +16,7 @@ from .crypto import encrypt_secret, decrypt_secret
 from .config import settings
 from .auth import _bearer
 
-router = APIRouter(prefix="/api/coindcx", tags=["coindcx"])
+router = APIRouter(prefix="/coindcx", tags=["coindcx"])
 
 class ConnectCoinDCXRequest(BaseModel):
     api_key: str
