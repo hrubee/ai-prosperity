@@ -127,14 +127,6 @@ export default function TradejiniConnectPage() {
                 <h1 className="text-xl font-semibold text-white">
                   Connect once — we handle the rest
                 </h1>
-                <p className="mt-2 text-sm text-muted">
-                  Paste your Tradejini API key, login PIN, and your authenticator&apos;s
-                  TOTP seed (the base32 &ldquo;manual entry&rdquo; / &ldquo;setup key&rdquo; shown
-                  when you set up your authenticator app — <b className="text-slate-200">not</b>{" "}
-                  the 6-digit code). We encrypt all three and auto-renew your daily Tradejini
-                  session for you —{" "}
-                  <b className="text-slate-200">you never have to reconnect.</b>
-                </p>
               </div>
 
               {err && (
