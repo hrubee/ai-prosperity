@@ -1041,6 +1041,72 @@ def admin_record_profit_ledger(body: RecordProfitLedgerRequest, _: User = Depend
 @app.get("/admin/ledger")
 def admin_get_ledger_clients(_: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
     users = db.query(User).all()
+
+    # Auto-sync live broker positions for connected Tradejini clients
+    from zoneinfo import ZoneInfo
+    ist = ZoneInfo("Asia/Kolkata")
+    now_ist = datetime.now(ist)
+    today_start_ist = now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    for u in users:
+        conn = db.query(TradejiniConnection).filter_by(user_id=u.id).one_or_none()
+        if conn and tradejini_auth.has_auto_creds(conn) and conn.status == "connected":
+            try:
+                token = tradejini_auth.ensure_client_token(db, conn)
+                tj_client = tradejini.TradejiniClient(token, api_key=conn.api_key)
+                raw_pos = tj_client._get("/api/oms/positions", {"symDetails": "true"})
+                pos_list = (raw_pos or {}).get("d", []) if isinstance(raw_pos, dict) else []
+                for p in pos_list:
+                    sym_obj = p.get("sym") or {}
+                    disp_sym = sym_obj.get("dispSym") or sym_obj.get("trdSym") or p.get("symId") or "Unknown"
+                    rpnl = float(p.get("realizedPnl") or p.get("dayPos", {}).get("dayRealizedPnl", 0.0) or 0.0)
+                    buy_qty = float(p.get("buyQty", 0) or 0)
+                    sell_qty = float(p.get("sellQty", 0) or 0)
+                    buy_avg = float(p.get("buyAvgPrice", 0) or 0)
+                    sell_avg = float(p.get("sellAvgPrice", 0) or 0)
+                    net_qty = float(p.get("netQty", 0) or 0)
+                    qty = max(buy_qty, sell_qty)
+                    if qty > 0:
+                        existing = (
+                            db.query(ClientProfitLedger)
+                            .filter(
+                                ClientProfitLedger.user_id == u.id,
+                                ClientProfitLedger.symbol == disp_sym,
+                                ClientProfitLedger.executed_at >= today_start_ist.astimezone(timezone.utc)
+                            )
+                            .first()
+                        )
+                        if not existing:
+                            rec = ClientProfitLedger(
+                                user_id=u.id,
+                                email=u.email,
+                                name=u.name,
+                                phone=u.phone,
+                                client_id=u.client_id,
+                                venue="tradejini",
+                                symbol=disp_sym,
+                                side="buy" if buy_qty >= sell_qty else "sell",
+                                size=qty,
+                                entry_price=buy_avg,
+                                exit_price=sell_avg if sell_qty > 0 else None,
+                                realized_pnl_inr=rpnl,
+                                fee_inr=round(qty * 0.05 + 40.0, 2),
+                                status="closed" if net_qty == 0 else "open",
+                                executed_at=now_ist.astimezone(timezone.utc),
+                                closed_at=now_ist.astimezone(timezone.utc) if net_qty == 0 else None
+                            )
+                            db.add(rec)
+                        else:
+                            existing.realized_pnl_inr = rpnl
+                            existing.entry_price = buy_avg
+                            existing.exit_price = sell_avg if sell_qty > 0 else existing.exit_price
+                            existing.size = qty
+                            existing.status = "closed" if net_qty == 0 else "open"
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                print(f"[Ledger Global Sync] Client {u.email}: {e}")
+
     entries = db.query(ClientProfitLedger).order_by(ClientProfitLedger.executed_at.desc()).all()
 
     clients_dict = {}
@@ -1061,6 +1127,7 @@ def admin_get_ledger_clients(_: User = Depends(auth.require_admin), db: Session 
             "wins": 0,
             "booked_pnl_inr": 0.0,
             "total_fees_inr": 0.0,
+            "net_pnl_inr": 0.0,
             "is_deleted": False,
         }
 
@@ -1080,15 +1147,19 @@ def admin_get_ledger_clients(_: User = Depends(auth.require_admin), db: Session 
                 "wins": 0,
                 "booked_pnl_inr": 0.0,
                 "total_fees_inr": 0.0,
+                "net_pnl_inr": 0.0,
                 "is_deleted": True,
             }
         
         c = clients_dict[uid]
         c["total_trades"] += 1
-        if e.realized_pnl_inr > 0 or e.realized_pnl_usd > 0:
+        pnl = e.realized_pnl_inr or 0.0
+        fee = e.fee_inr or 0.0
+        if pnl > 0 or (e.realized_pnl_usd and e.realized_pnl_usd > 0):
             c["wins"] += 1
-        c["booked_pnl_inr"] += e.realized_pnl_inr
-        c["total_fees_inr"] += e.fee_inr
+        c["booked_pnl_inr"] = round(c["booked_pnl_inr"] + pnl, 2)
+        c["total_fees_inr"] = round(c["total_fees_inr"] + fee, 2)
+        c["net_pnl_inr"] = round(c["booked_pnl_inr"] - c["total_fees_inr"], 2)
 
     client_list = sorted(list(clients_dict.values()), key=lambda x: x["booked_pnl_inr"], reverse=True)
     return {"clients": client_list}

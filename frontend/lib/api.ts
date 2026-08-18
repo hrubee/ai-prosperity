@@ -261,6 +261,7 @@ export const api = {
         wins: number;
         booked_pnl_inr: number;
         total_fees_inr: number;
+        net_pnl_inr: number;
         is_deleted: boolean;
       }>;
     }>("/admin/ledger"),

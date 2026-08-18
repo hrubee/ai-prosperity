@@ -36,7 +36,7 @@ class Settings:
     auth_dev_echo_otp: bool = _get("AUTH_DEV_ECHO_OTP", "0") == "1"
 
     # Secret encryption (urlsafe base64 32-byte Fernet key). In prod, source from KMS/Vault.
-    secret_encryption_key: str = _get("SECRET_ENCRYPTION_KEY", "")
+    secret_encryption_key: str = _get("SECRET_ENCRYPTION_KEY", "") or _get("FERNET_KEY", "")
 
     # Delta Exchange (India)
     delta_base_url: str = _get("DELTA_BASE_URL", "https://api.india.delta.exchange")
