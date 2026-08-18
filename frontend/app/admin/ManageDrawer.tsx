@@ -117,39 +117,9 @@ export function ManageDrawer({
               )}
             </div>
 
-            {/* equity + positions */}
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <div className="card p-4">
-                <p className="text-xs uppercase tracking-wider text-muted">Equity</p>
-                <p className="mt-1 text-lg font-semibold text-white">${d.equity.toFixed(2)}</p>
-              </div>
-              <div className="card p-4">
-                <p className="text-xs uppercase tracking-wider text-muted">Open positions</p>
-                <p className="mt-1 text-lg font-semibold text-white">{d.positions.length}</p>
-              </div>
-            </div>
-            {d.live_error && (
-              <p className="mt-3 rounded-lg border border-loss/40 bg-loss/10 px-3 py-2 text-xs text-loss">
-                Live data error: {d.live_error}
-              </p>
-            )}
-
-            {d.positions.length > 0 && (
-              <div className="mt-3 card p-4 text-sm">
-                {d.positions.map((p) => (
-                  <div key={p.symbol} className="flex justify-between border-b border-ink-800 py-1.5 last:border-0">
-                    <span className="text-white">{p.base}</span>
-                    <span className={p.side === "long" ? "text-gain" : "text-loss"}>{p.side.toUpperCase()}</span>
-                    <span className="text-muted">{p.coin_size}</span>
-                    <span className="font-mono text-muted">{p.entry.toLocaleString()}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-
             {/* Tradejini (Indian F&O) venue */}
             {d.tradejini && (
-              <div className="mt-4 rounded-xl border border-ink-700 bg-ink-800/40 p-4">
+              <div className="mt-5 rounded-xl border border-ink-700 bg-ink-800/40 p-4">
                 <div className="flex items-center justify-between">
                   <p className="text-sm font-semibold text-white">Tradejini (F&O)</p>
                   <span
@@ -162,19 +132,24 @@ export function ManageDrawer({
                     {d.tradejini.status}
                   </span>
                 </div>
-                <p className="mt-2 text-sm text-muted">
-                  Margin ₹{(d.tradejini.equity_inr ?? 0).toLocaleString("en-IN")} ·{" "}
-                  {d.tradejini.positions?.length ?? 0} positions
-                  {d.tradejini.expires_at &&
-                    ` · expires ${new Date(d.tradejini.expires_at).toLocaleString([], {
+                <div className="mt-3 flex items-baseline justify-between border-t border-ink-700/60 pt-3">
+                  <span className="text-xs text-muted">F&O Buyable Cash:</span>
+                  <span className="text-lg font-bold font-mono text-emerald-400">
+                    ₹{(d.tradejini.equity_inr ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+                {d.tradejini.expires_at && (
+                  <p className="mt-2 text-[11px] text-slate-400">
+                    Token expires: {new Date(d.tradejini.expires_at).toLocaleString([], {
                       month: "short",
                       day: "numeric",
                       hour: "2-digit",
                       minute: "2-digit",
-                    })}`}
-                </p>
+                    })}
+                  </p>
+                )}
                 {d.tradejini.error && (
-                  <p className="mt-1 text-xs text-loss">{d.tradejini.error}</p>
+                  <p className="mt-2 text-xs text-loss">{d.tradejini.error}</p>
                 )}
               </div>
             )}
