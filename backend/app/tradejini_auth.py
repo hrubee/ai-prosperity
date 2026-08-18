@@ -102,5 +102,8 @@ def ensure_client_token(db, conn: TradejiniConnection) -> str:
     now = datetime.now(timezone.utc)
     if (conn.access_token_encrypted and conn.expires_at
             and conn.expires_at > now + _REFRESH_SKEW):
-        return decrypt_secret(conn.access_token_encrypted)
+        try:
+            return decrypt_secret(conn.access_token_encrypted)
+        except Exception:
+            pass
     return mint_and_store(db, conn)
