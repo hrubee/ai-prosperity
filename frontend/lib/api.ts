@@ -285,6 +285,54 @@ export const api = {
         is_deleted: boolean;
       }>;
     }>("/admin/ledger"),
+  adminProfitReports: (params?: { month?: string; from_date?: string; to_date?: string; user_id?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.month) q.set("month", params.month);
+    if (params?.from_date) q.set("from_date", params.from_date);
+    if (params?.to_date) q.set("to_date", params.to_date);
+    if (params?.user_id) q.set("user_id", params.user_id);
+    const qs = q.toString();
+    return req<{
+      date_range: string;
+      from_date: string | null;
+      to_date: string | null;
+      summary: {
+        total_clients: number;
+        active_trading_clients: number;
+        total_trades: number;
+        total_gross_profit_inr: number;
+        total_fees_inr: number;
+        total_net_profit_inr: number;
+      };
+      clients: Array<{
+        user_id: string;
+        name: string;
+        phone: string;
+        client_id: string;
+        email: string;
+        total_trades: number;
+        winning_trades: number;
+        losing_trades: number;
+        win_rate_pct: number;
+        gross_profit_inr: number;
+        fee_inr: number;
+        net_profit_inr: number;
+        date_range: string;
+        trades: Array<{
+          id: string;
+          symbol: string;
+          side: string;
+          size: number;
+          entry_price: number;
+          exit_price: number | null;
+          realized_pnl_inr: number;
+          fee_inr: number;
+          net_pnl_inr: number;
+          executed_at: string | null;
+        }>;
+      }>;
+    }>(`/admin/reports/client-profits${qs ? `?${qs}` : ""}`);
+  },
   adminClientProfits: (id: string, timeframe: string = "all", from_date?: string, to_date?: string) => {
     let url = `/admin/ledger/${id}/profits?timeframe=${encodeURIComponent(timeframe)}`;
     if (from_date) url += `&from_date=${encodeURIComponent(from_date)}`;

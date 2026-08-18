@@ -1568,6 +1568,209 @@ def admin_get_client_profits(
     }
 
 
+@app.get("/admin/reports/client-profits")
+def admin_get_client_profit_report(
+    month: str | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
+    user_id: str | None = None,
+    _: User = Depends(auth.require_admin),
+    db: Session = Depends(get_db)
+):
+    from zoneinfo import ZoneInfo
+    ist = ZoneInfo("Asia/Kolkata")
+    now_ist = datetime.now(ist)
+
+    # 1. Determine Date Range
+    start_dt = None
+    end_dt = None
+    date_range_label = ""
+
+    if month:
+        try:
+            m_dt = datetime.strptime(month.strip(), "%Y-%m").replace(day=1, tzinfo=ist)
+            if m_dt.month == 12:
+                next_m = m_dt.replace(year=m_dt.year + 1, month=1)
+            else:
+                next_m = m_dt.replace(month=m_dt.month + 1)
+            start_dt = m_dt.astimezone(timezone.utc)
+            end_dt = (next_m - timedelta(seconds=1)).astimezone(timezone.utc)
+            date_range_label = m_dt.strftime("%B %Y")
+        except Exception:
+            pass
+
+    if not start_dt and from_date:
+        try:
+            f_dt = datetime.strptime(from_date.strip(), "%Y-%m-%d").replace(tzinfo=ist)
+            start_dt = f_dt.astimezone(timezone.utc)
+        except Exception:
+            pass
+
+    if not end_dt and to_date:
+        try:
+            t_dt = datetime.strptime(to_date.strip(), "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=ist)
+            end_dt = t_dt.astimezone(timezone.utc)
+        except Exception:
+            pass
+
+    if not date_range_label:
+        if from_date and to_date:
+            date_range_label = f"{from_date} to {to_date}"
+        elif from_date:
+            date_range_label = f"From {from_date}"
+        elif to_date:
+            date_range_label = f"Until {to_date}"
+        else:
+            m_dt = now_ist.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            if m_dt.month == 12:
+                next_m = m_dt.replace(year=m_dt.year + 1, month=1)
+            else:
+                next_m = m_dt.replace(month=m_dt.month + 1)
+            start_dt = m_dt.astimezone(timezone.utc)
+            end_dt = (next_m - timedelta(seconds=1)).astimezone(timezone.utc)
+            date_range_label = m_dt.strftime("%B %Y")
+
+    # 2. Query ClientProfitLedger
+    q = db.query(ClientProfitLedger)
+    if start_dt:
+        q = q.filter(ClientProfitLedger.executed_at >= start_dt)
+    if end_dt:
+        q = q.filter(ClientProfitLedger.executed_at <= end_dt)
+    if user_id:
+        u_obj = db.get(User, user_id)
+        if u_obj:
+            q = q.filter(
+                or_(
+                    ClientProfitLedger.user_id == u_obj.id,
+                    func.lower(ClientProfitLedger.client_id) == (u_obj.client_id or "").lower(),
+                    func.lower(ClientProfitLedger.email) == u_obj.email.lower()
+                )
+            )
+        else:
+            q = q.filter(
+                or_(
+                    ClientProfitLedger.user_id == user_id,
+                    func.lower(ClientProfitLedger.client_id) == user_id.lower(),
+                    func.lower(ClientProfitLedger.email) == user_id.lower()
+                )
+            )
+
+    entries = q.order_by(ClientProfitLedger.executed_at.asc()).all()
+
+    # 3. Group by Client
+    users = db.query(User).all()
+    client_report_map = {}
+
+    for u in users:
+        if user_id and u.id != user_id and (u.client_id or "").lower() != user_id.lower() and u.email.lower() != user_id.lower():
+            continue
+        client_report_map[u.id] = {
+            "user_id": u.id,
+            "name": u.name or "Client",
+            "phone": u.phone or "—",
+            "client_id": u.client_id or "—",
+            "email": u.email,
+            "total_trades": 0,
+            "winning_trades": 0,
+            "losing_trades": 0,
+            "win_rate_pct": 0.0,
+            "gross_profit_inr": 0.0,
+            "fee_inr": 0.0,
+            "net_profit_inr": 0.0,
+            "date_range": date_range_label,
+            "trades": []
+        }
+
+    for e in entries:
+        u_key = e.user_id
+        if u_key not in client_report_map:
+            matched_u = next(
+                (u for u in users if u.email.lower() == (e.email or "").lower() or (u.client_id and (u.client_id or "").lower() == (e.client_id or "").lower())),
+                None
+            )
+            if matched_u:
+                u_key = matched_u.id
+            else:
+                client_report_map[u_key] = {
+                    "user_id": e.user_id,
+                    "name": e.name or "Archived Client",
+                    "phone": e.phone or "—",
+                    "client_id": e.client_id or "—",
+                    "email": e.email,
+                    "total_trades": 0,
+                    "winning_trades": 0,
+                    "losing_trades": 0,
+                    "win_rate_pct": 0.0,
+                    "gross_profit_inr": 0.0,
+                    "fee_inr": 0.0,
+                    "net_profit_inr": 0.0,
+                    "date_range": date_range_label,
+                    "trades": []
+                }
+
+        c = client_report_map[u_key]
+        pnl = e.realized_pnl_inr or 0.0
+        fee = e.fee_inr or 0.0
+        c["total_trades"] += 1
+        c["gross_profit_inr"] += pnl
+        c["fee_inr"] += fee
+        c["net_profit_inr"] += (pnl - fee)
+        if pnl > 0:
+            c["winning_trades"] += 1
+        elif pnl < 0:
+            c["losing_trades"] += 1
+
+        c["trades"].append({
+            "id": e.id,
+            "symbol": e.symbol,
+            "side": e.side,
+            "size": e.size,
+            "entry_price": e.entry_price,
+            "exit_price": e.exit_price,
+            "realized_pnl_inr": round(pnl, 2),
+            "fee_inr": round(fee, 2),
+            "net_pnl_inr": round(pnl - fee, 2),
+            "executed_at": e.executed_at.isoformat() if e.executed_at else None
+        })
+
+    clients_list = []
+    tot_gross = 0.0
+    tot_fees = 0.0
+    tot_net = 0.0
+    tot_trades_all = 0
+
+    for c in client_report_map.values():
+        if c["total_trades"] > 0:
+            c["win_rate_pct"] = round((c["winning_trades"] / c["total_trades"]) * 100, 1)
+        c["gross_profit_inr"] = round(c["gross_profit_inr"], 2)
+        c["fee_inr"] = round(c["fee_inr"], 2)
+        c["net_profit_inr"] = round(c["net_profit_inr"], 2)
+
+        tot_gross += c["gross_profit_inr"]
+        tot_fees += c["fee_inr"]
+        tot_net += c["net_profit_inr"]
+        tot_trades_all += c["total_trades"]
+        clients_list.append(c)
+
+    clients_list.sort(key=lambda x: (x["total_trades"] > 0, x["net_profit_inr"]), reverse=True)
+
+    return {
+        "date_range": date_range_label,
+        "from_date": start_dt.isoformat() if start_dt else None,
+        "to_date": end_dt.isoformat() if end_dt else None,
+        "summary": {
+            "total_clients": len(clients_list),
+            "active_trading_clients": len([c for c in clients_list if c["total_trades"] > 0]),
+            "total_trades": tot_trades_all,
+            "total_gross_profit_inr": round(tot_gross, 2),
+            "total_fees_inr": round(tot_fees, 2),
+            "total_net_profit_inr": round(tot_net, 2)
+        },
+        "clients": clients_list
+    }
+
+
+
 # ── admin: AI Vision brain log ─────────────────────────────
 @app.get("/admin/brain/events")
 def admin_brain_events(limit: int = 50, source: str | None = None,
