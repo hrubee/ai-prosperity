@@ -88,7 +88,7 @@ export default function TradejiniConnectPage() {
                 href="https://developer.tradejini.com/dashboard"
                 target="_blank"
                 rel="noreferrer"
-                className="btn-ghost flex items-center justify-center gap-2 w-full py-2.5 text-sm font-semibold !text-gold-400 !border-gold-500/40 hover:!bg-gold-500/10 transition shadow-sm"
+                className="btn-gold flex items-center justify-center gap-2 w-full py-2.5 text-sm font-semibold shadow-md"
               >
                 <span>Open Tradejini Developer Portal</span>
                 <span className="text-base font-bold leading-none">↗</span>
@@ -98,8 +98,8 @@ export default function TradejiniConnectPage() {
                 <li>✓ Create a new app (any name)</li>
                 <li>✓ Copy the <b>API key</b> shown after creation</li>
               </ul>
-              <button className="btn-gold w-full" onClick={() => setStep(1)}>
-                I&apos;ve created the app
+              <button className="btn-ghost w-full py-2.5 text-sm font-semibold" onClick={() => setStep(1)}>
+                I&apos;ve created the app →
               </button>
             </div>
           )}
