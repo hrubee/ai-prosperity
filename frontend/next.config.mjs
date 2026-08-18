@@ -11,8 +11,8 @@ const nextConfig = {
   async rewrites() {
     return [
       {
-        source: '/api/vol2b2t/:path*',
-        destination: 'http://127.0.0.1:8000/vol2b2t/:path*',
+        source: '/api/:path*',
+        destination: 'http://127.0.0.1:8000/:path*',
       },
     ];
   },
