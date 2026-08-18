@@ -137,6 +137,7 @@ class TradejiniConnection(Base):
     access_token_encrypted: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), default="connected")  # connected|expired|disconnected
     paused: Mapped[bool] = mapped_column(Boolean, default=False)
+    lot_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)

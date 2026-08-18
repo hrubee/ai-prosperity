@@ -766,8 +766,21 @@ def admin_clients(_: User = Depends(auth.require_admin), db: Session = Depends(g
         .outerjoin(TradejiniConnection, TradejiniConnection.user_id == User.id)
         .all()
     )
-    return [
-        {
+
+    client_list = []
+    for (u, s, c, t) in rows:
+        buyable_cash = None
+        lot_mult = float(t.lot_multiplier) if (t and t.lot_multiplier is not None) else 1.0
+
+        if t and tradejini_auth.has_auto_creds(t) and t.status == "connected":
+            try:
+                tok = tradejini_auth.ensure_client_token(db, t)
+                tjc = tradejini.TradejiniClient(tok, api_key=t.api_key)
+                buyable_cash = tjc.equity_inr()
+            except Exception:
+                buyable_cash = None
+
+        client_list.append({
             "id": u.id,
             "email": u.email,
             "name": u.name,
@@ -779,10 +792,47 @@ def admin_clients(_: User = Depends(auth.require_admin), db: Session = Depends(g
             "connection": c.status if c else None,
             "paused": c.paused if c else None,
             "sandbox": c.sandbox if c else None,
-            "tradejini": t.status if t else None,  # F&O venue connection status
-        }
-        for (u, s, c, t) in rows
-    ]
+            "tradejini": t.status if t else None,
+            "lot_multiplier": lot_mult,
+            "buyable_cash_inr": buyable_cash,
+        })
+    return client_list
+
+
+class SetLotMultiplierRequest(BaseModel):
+    lot_multiplier: float
+
+@app.post("/admin/clients/{user_id}/lot-multiplier")
+def admin_set_lot_multiplier(
+    user_id: str,
+    body: SetLotMultiplierRequest,
+    _: User = Depends(auth.require_admin),
+    db: Session = Depends(get_db)
+):
+    u = db.get(User, user_id)
+    if u is None:
+        raise HTTPException(status_code=404, detail="Client not found")
+    
+    t = db.query(TradejiniConnection).filter_by(user_id=u.id).one_or_none()
+    mult = max(0.1, round(float(body.lot_multiplier), 2))
+    if t is None:
+        t = TradejiniConnection(
+            user_id=u.id,
+            api_key=None,
+            access_token_encrypted="",
+            status="disconnected",
+            lot_multiplier=mult
+        )
+        db.add(t)
+    else:
+        t.lot_multiplier = mult
+        db.add(t)
+    
+    db.commit()
+    return {
+        "result": f"Lot multiplier updated to {mult}x for {u.email}",
+        "lot_multiplier": mult
+    }
 
 
 def _admin_conn(db: Session, user_id: str) -> DeltaConnection:

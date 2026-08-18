@@ -309,12 +309,16 @@ async def receive_webhook(request: Request):
                     sub = session.query(Subscription).filter_by(user_id=user.id).one_or_none()
                     token = tradejini_auth.ensure_client_token(session, c)
                     cl = TradejiniClient(token, api_key=c.api_key)
-                    valid_clients.append((cl, user, sub))
+                    valid_clients.append((cl, user, sub, c))
                 except Exception as e:
                     pass
                     
-        for client, user, sub in valid_clients:
+        for client, user, sub, conn_obj in valid_clients:
             try:
+                # Calculate lot multiplier adjusted quantity
+                lot_mult = float(conn_obj.lot_multiplier) if (conn_obj and conn_obj.lot_multiplier) else 1.0
+                client_qty = max(1, int(round(quantity * lot_mult)))
+
                 if do_cancel:
                     mapping = get_order_mapping(dhan_order_id)
                     tj_order_id = mapping.get(client.api_key)
@@ -344,7 +348,7 @@ async def receive_webhook(request: Request):
                         client.modify_order(
                             sym_id=sym_id,
                             order_id=tj_order_id,
-                            qty=quantity,
+                            qty=client_qty,
                             order_type=tj_order_type,
                             limit_price=limit_price,
                             trig_price=trig_price
@@ -408,7 +412,7 @@ async def receive_webhook(request: Request):
                 resp = client.place_order(
                     sym_id=sym_id,
                     side=action.lower(),
-                    qty=quantity,
+                    qty=client_qty,
                     product=tj_product,
                     order_type=tj_order_type,
                     limit_price=limit_price,

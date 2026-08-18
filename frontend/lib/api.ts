@@ -204,7 +204,22 @@ export const api = {
     }),
   adminClients: () =>
     req<
-      Array<{ id: string; email: string; name: string | null; phone: string | null; client_id: string | null; package: string | null; subscription: string | null; payment_status: string; connection: string | null; tradejini: string | null; paused: boolean | null; sandbox: boolean | null }>
+      Array<{
+        id: string;
+        email: string;
+        name: string | null;
+        phone: string | null;
+        client_id: string | null;
+        package: string | null;
+        subscription: string | null;
+        payment_status: string;
+        connection: string | null;
+        tradejini: string | null;
+        paused: boolean | null;
+        sandbox: boolean | null;
+        lot_multiplier?: number;
+        buyable_cash_inr?: number | null;
+      }>
     >("/admin/clients"),
   adminClientDetail: (id: string) =>
     req<{
@@ -229,6 +244,11 @@ export const api = {
       } | null;
       orders: OrderRow[];
     }>(`/admin/clients/${id}`),
+  adminSetLotMultiplier: (id: string, lot_multiplier: number) =>
+    req<{ result: string; lot_multiplier: number }>(`/admin/clients/${id}/lot-multiplier`, {
+      method: "POST",
+      body: JSON.stringify({ lot_multiplier }),
+    }),
   adminPause: (id: string, paused: boolean) =>
     req<{ paused: boolean }>(`/admin/clients/${id}/pause?paused=${paused}`, { method: "POST" }),
   adminForceClose: (id: string) =>
