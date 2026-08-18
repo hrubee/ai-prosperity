@@ -345,6 +345,13 @@ async def receive_webhook(request: Request):
                             meta = client.resolve(trading_symbol)
                         
                         sym_id = meta["sym_id"]
+                        contract_lot_size = int(meta.get("lot_size") or 1)
+                        if contract_lot_size > 1:
+                            lots = max(1, int(round((quantity * lot_mult) / contract_lot_size)))
+                            client_qty = lots * contract_lot_size
+                        else:
+                            client_qty = max(1, int(round(quantity * lot_mult)))
+
                         client.modify_order(
                             sym_id=sym_id,
                             order_id=tj_order_id,
@@ -356,7 +363,7 @@ async def receive_webhook(request: Request):
                         await manager.broadcast(json.dumps({
                             "type": "info",
                             "account": client.api_key,
-                            "message": f"Modified order {tj_order_id}"
+                            "message": f"Modified order {tj_order_id} (qty: {client_qty})"
                         }))
                     continue
 
@@ -373,6 +380,12 @@ async def receive_webhook(request: Request):
                     meta = client.resolve(trading_symbol)
                 
                 sym_id = meta["sym_id"]
+                contract_lot_size = int(meta.get("lot_size") or 1)
+                if contract_lot_size > 1:
+                    lots = max(1, int(round((quantity * lot_mult) / contract_lot_size)))
+                    client_qty = lots * contract_lot_size
+                else:
+                    client_qty = max(1, int(round(quantity * lot_mult)))
                 
                 # Check subscription (Active by default for all connected clients)
                 if sub is None:
