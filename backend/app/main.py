@@ -800,7 +800,7 @@ def admin_clients(_: User = Depends(auth.require_admin), db: Session = Depends(g
 
 
 class SetLotMultiplierRequest(BaseModel):
-    lot_multiplier: float
+    lot_multiplier: int | float
 
 @app.post("/admin/clients/{user_id}/lot-multiplier")
 def admin_set_lot_multiplier(
@@ -814,23 +814,23 @@ def admin_set_lot_multiplier(
         raise HTTPException(status_code=404, detail="Client not found")
     
     t = db.query(TradejiniConnection).filter_by(user_id=u.id).one_or_none()
-    mult = max(0.1, round(float(body.lot_multiplier), 2))
+    mult = max(1, int(round(float(body.lot_multiplier))))
     if t is None:
         t = TradejiniConnection(
             user_id=u.id,
             api_key=None,
             access_token_encrypted="",
             status="disconnected",
-            lot_multiplier=mult
+            lot_multiplier=float(mult)
         )
         db.add(t)
     else:
-        t.lot_multiplier = mult
+        t.lot_multiplier = float(mult)
         db.add(t)
     
     db.commit()
     return {
-        "result": f"Lot multiplier updated to {mult}x for {u.email}",
+        "result": f"Lot size updated to {mult}x for {u.email}",
         "lot_multiplier": mult
     }
 

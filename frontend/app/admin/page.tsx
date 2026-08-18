@@ -62,7 +62,7 @@ export default function Admin() {
   }, []);
 
   async function handleUpdateLotMultiplier(clientId: string, newMultiplier: number) {
-    const val = Math.max(0.1, roundTwo(newMultiplier));
+    const val = Math.max(1, Math.round(newMultiplier));
     setUpdatingMultiplier((prev) => ({ ...prev, [clientId]: true }));
     try {
       await api.adminSetLotMultiplier(clientId, val);
@@ -70,14 +70,10 @@ export default function Admin() {
         prev.map((c) => (c.id === clientId ? { ...c, lot_multiplier: val } : c))
       );
     } catch (e: any) {
-      alert(`Failed to update lot multiplier: ${e.message || "Network error"}`);
+      alert(`Failed to update lot size: ${e.message || "Network error"}`);
     } finally {
       setUpdatingMultiplier((prev) => ({ ...prev, [clientId]: false }));
     }
-  }
-
-  function roundTwo(num: number) {
-    return Math.round((num + Number.EPSILON) * 100) / 100;
   }
 
   const filtered = clients.filter((c) => {
@@ -198,25 +194,25 @@ export default function Admin() {
                           </Badge>
                         </td>
 
-                        {/* Interactive Lot Sizing Multiplier Controls */}
+                        {/* Interactive Lot Sizing Controls (Always Whole Number Integer) */}
                         <td className="text-center font-mono">
                           <div className="inline-flex items-center gap-1.5 bg-slate-950/90 px-2 py-1 rounded-lg border border-slate-700/80 shadow-sm">
                             <button
-                              disabled={isBusy || currentMultiplier <= 0.1}
-                              onClick={() => handleUpdateLotMultiplier(c.id, Math.max(0.1, currentMultiplier - 0.5))}
+                              disabled={isBusy || Math.round(currentMultiplier) <= 1}
+                              onClick={() => handleUpdateLotMultiplier(c.id, Math.max(1, Math.round(currentMultiplier) - 1))}
                               className="h-6 w-6 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 font-bold flex items-center justify-center text-xs transition active:scale-95"
-                              title="Decrease lot size multiplier (-0.5x)"
+                              title="Decrease lot size (-1 lot)"
                             >
                               -
                             </button>
-                            <span className="font-bold text-gold-400 min-w-[42px] text-center text-xs">
-                              {isBusy ? "…" : `${currentMultiplier.toFixed(1)}x`}
+                            <span className="font-bold text-gold-400 min-w-[36px] text-center text-xs">
+                              {isBusy ? "…" : `${Math.max(1, Math.round(currentMultiplier))}x`}
                             </span>
                             <button
                               disabled={isBusy}
-                              onClick={() => handleUpdateLotMultiplier(c.id, currentMultiplier + 0.5)}
+                              onClick={() => handleUpdateLotMultiplier(c.id, Math.max(1, Math.round(currentMultiplier) + 1))}
                               className="h-6 w-6 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 font-bold flex items-center justify-center text-xs transition active:scale-95"
-                              title="Increase lot size multiplier (+0.5x)"
+                              title="Increase lot size (+1 lot)"
                             >
                               +
                             </button>

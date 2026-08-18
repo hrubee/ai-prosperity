@@ -315,9 +315,9 @@ async def receive_webhook(request: Request):
                     
         for client, user, sub, conn_obj in valid_clients:
             try:
-                # Calculate lot multiplier adjusted quantity
-                lot_mult = float(conn_obj.lot_multiplier) if (conn_obj and conn_obj.lot_multiplier) else 1.0
-                client_qty = max(1, int(round(quantity * lot_mult)))
+                # Calculate lot multiplier adjusted quantity (whole integer)
+                lot_mult = max(1, int(round(float(conn_obj.lot_multiplier or 1))))
+                client_qty = max(1, quantity * lot_mult)
 
                 if do_cancel:
                     mapping = get_order_mapping(dhan_order_id)
