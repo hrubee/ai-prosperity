@@ -8,7 +8,7 @@ import { api } from "@/lib/api";
 // The static egress IP clients must whitelist in their Tradejini app.
 const STATIC_EGRESS_IP = "187.127.132.39";
 
-const steps = ["Create app", "Whitelist IP", "Connect"] as const;
+const steps = ["Create app", "App visibility", "Connect"] as const;
 
 export default function TradejiniConnectPage() {
   const [step, setStep] = useState(0);
@@ -106,26 +106,16 @@ export default function TradejiniConnectPage() {
 
           {step === 1 && (
             <div className="space-y-4">
-              <h1 className="text-xl font-semibold text-white">Whitelist our server IP</h1>
-              <p className="text-sm text-muted">
-                Tradejini apps only accept requests from whitelisted IPs. Add the following IP as
-                your app&apos;s <b className="text-slate-200">Static IP</b> so our server can place
-                trades on your behalf:
+              <h1 className="text-xl font-semibold text-white">Wait for Tradejini app to be visible</h1>
+              <p className="text-sm text-muted leading-relaxed">
+                Sometimes Tradejini does not instantly make your individual app visible on the portal. Click the button below when the individual app is visible in your Tradejini portal.
               </p>
-              <div className="flex items-center justify-between rounded-xl border border-gold-500/40 bg-ink-800/60 px-4 py-3">
-                <code className="font-mono text-lg text-gold-400">{STATIC_EGRESS_IP}</code>
-                <CopyButton text={STATIC_EGRESS_IP} />
-              </div>
-              <p className="text-xs text-muted">
-                This is the only IP that can use your key. A stolen key is useless from anywhere
-                else.
-              </p>
-              <div className="flex gap-3">
+              <div className="flex gap-3 pt-2">
                 <button className="btn-ghost flex-1" onClick={() => setStep(0)}>
-                  Back
+                  ← Back
                 </button>
                 <button className="btn-gold flex-1" onClick={() => setStep(2)}>
-                  IP whitelisted
+                  The app is visible now →
                 </button>
               </div>
             </div>
