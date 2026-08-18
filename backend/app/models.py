@@ -41,8 +41,8 @@ class User(Base):
     phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
     client_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # Payment / Account approval status (approved by default)
-    payment_status: Mapped[str] = mapped_column(String(16), default="approved")  # pending | approved | rejected
+    # Payment / Account approval status (pending by default, requiring admin approval)
+    payment_status: Mapped[str] = mapped_column(String(16), default="pending")  # pending | approved | rejected
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     subscription: Mapped["Subscription | None"] = relationship(back_populates="user", uselist=False)
