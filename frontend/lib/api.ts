@@ -264,8 +264,11 @@ export const api = {
         is_deleted: boolean;
       }>;
     }>("/admin/ledger"),
-  adminClientProfits: (id: string) =>
-    req<{
+  adminClientProfits: (id: string, timeframe: string = "all", from_date?: string, to_date?: string) => {
+    let url = `/admin/ledger/${id}/profits?timeframe=${encodeURIComponent(timeframe)}`;
+    if (from_date) url += `&from_date=${encodeURIComponent(from_date)}`;
+    if (to_date) url += `&to_date=${encodeURIComponent(to_date)}`;
+    return req<{
       client: {
         user_id: string;
         email: string;
@@ -274,13 +277,78 @@ export const api = {
         client_id: string | null;
         status: string;
       };
+      timeframe: string;
       tradejini_connected: boolean;
+      tradejini_today_realized_pnl: number;
+      summary: {
+        gross_pnl_inr: number;
+        total_fees_inr: number;
+        net_pnl_inr: number;
+        total_trades: number;
+        wins: number;
+        losses: number;
+        win_rate_pct: number;
+      };
       booked_pnl_inr: number;
-      db_realized_pnl_inr: number;
-      tradejini_booked_pnl_inr: number | null;
       total_fees_inr: number;
       total_trades: number;
-      tradejini_positions: Array<any>;
+      tradejini_positions: Array<{
+        symbol: string;
+        product: string;
+        net_qty: number;
+        buy_qty: number;
+        sell_qty: number;
+        buy_avg_price: number;
+        sell_avg_price: number;
+        realized_pnl: number;
+        status: string;
+      }>;
+      tradejini_trades: Array<{
+        order_id: string;
+        fill_id: string;
+        symbol: string;
+        side: string;
+        fill_qty: number;
+        fill_price: number;
+        fill_value: number;
+        time: string;
+      }>;
+      daily_breakdown: Array<{
+        date: string;
+        formatted_date: string;
+        gross_pnl_inr: number;
+        total_fees_inr: number;
+        net_pnl_inr: number;
+        total_trades: number;
+        wins: number;
+        losses: number;
+        win_rate_pct: number;
+        trades: Array<{
+          id: string;
+          symbol: string;
+          side: string;
+          size: number;
+          entry_price: number;
+          exit_price: number | null;
+          realized_pnl_inr: number;
+          fee_inr: number;
+          net_pnl_inr: number;
+          status: string;
+          executed_at: string | null;
+          time_ist: string;
+        }>;
+      }>;
+      monthly_breakdown: Array<{
+        month: string;
+        formatted_month: string;
+        gross_pnl_inr: number;
+        total_fees_inr: number;
+        net_pnl_inr: number;
+        total_trades: number;
+        wins: number;
+        losses: number;
+        win_rate_pct: number;
+      }>;
       entries: Array<{
         id: string;
         symbol: string;
@@ -291,10 +359,12 @@ export const api = {
         realized_pnl_inr: number;
         realized_pnl_usd: number;
         fee_inr: number;
+        net_pnl_inr: number;
         status: string;
         executed_at: string | null;
       }>;
-    }>(`/admin/ledger/${id}/profits`),
+    }>(url);
+  },
   adminStats: () =>
     req<{
       total_clients: number;

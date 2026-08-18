@@ -1095,7 +1095,14 @@ def admin_get_ledger_clients(_: User = Depends(auth.require_admin), db: Session 
 
 
 @app.get("/admin/ledger/{user_id}/profits")
-def admin_get_client_profits(user_id: str, _: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
+def admin_get_client_profits(
+    user_id: str,
+    timeframe: str = "all",
+    from_date: str | None = None,
+    to_date: str | None = None,
+    _: User = Depends(auth.require_admin),
+    db: Session = Depends(get_db)
+):
     u = db.get(User, user_id)
     if u is None:
         # Search by client_id or email
@@ -1103,7 +1110,120 @@ def admin_get_client_profits(user_id: str, _: User = Depends(auth.require_admin)
     
     query_id = u.id if u else user_id
 
-    entries = (
+    from zoneinfo import ZoneInfo
+    ist = ZoneInfo("Asia/Kolkata")
+    now_ist = datetime.now(ist)
+    today_start_ist = now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    tj_connected = False
+    tj_today_realized_pnl = 0.0
+    tj_positions = []
+    tj_trades = []
+
+    # 1. Direct Live Broker Synchronization (Tradejini)
+    if u:
+        conn = db.query(TradejiniConnection).filter_by(user_id=u.id).one_or_none()
+        if conn and tradejini_auth.has_auto_creds(conn) and conn.status == "connected":
+            try:
+                token = tradejini_auth.ensure_client_token(db, conn)
+                tj_client = tradejini.TradejiniClient(token, api_key=conn.api_key)
+                
+                # Fetch positions
+                raw_pos = tj_client._get("/api/oms/positions", {"symDetails": "true"})
+                pos_list = (raw_pos or {}).get("d", []) if isinstance(raw_pos, dict) else []
+                
+                # Fetch trade book
+                raw_trades = tj_client._get("/api/oms/trades", {"symDetails": "true"})
+                trades_list = (raw_trades or {}).get("d", []) if isinstance(raw_trades, dict) else []
+                
+                tj_connected = True
+                
+                # Parse positions & compute today's real booked PnL
+                for p in pos_list:
+                    sym_obj = p.get("sym") or {}
+                    disp_sym = sym_obj.get("dispSym") or sym_obj.get("trdSym") or p.get("symId") or "Unknown"
+                    rpnl = float(p.get("realizedPnl") or p.get("dayPos", {}).get("dayRealizedPnl", 0.0) or 0.0)
+                    buy_qty = float(p.get("buyQty", 0) or 0)
+                    sell_qty = float(p.get("sellQty", 0) or 0)
+                    buy_avg = float(p.get("buyAvgPrice", 0) or 0)
+                    sell_avg = float(p.get("sellAvgPrice", 0) or 0)
+                    net_qty = float(p.get("netQty", 0) or 0)
+                    qty = max(buy_qty, sell_qty)
+
+                    tj_today_realized_pnl += rpnl
+                    tj_positions.append({
+                        "symbol": disp_sym,
+                        "product": p.get("product", "normal"),
+                        "net_qty": net_qty,
+                        "buy_qty": buy_qty,
+                        "sell_qty": sell_qty,
+                        "buy_avg_price": buy_avg,
+                        "sell_avg_price": sell_avg,
+                        "realized_pnl": round(rpnl, 2),
+                        "status": "closed" if net_qty == 0 else "open"
+                    })
+
+                    # Sync to ClientProfitLedger for today
+                    if qty > 0:
+                        existing = (
+                            db.query(ClientProfitLedger)
+                            .filter(
+                                ClientProfitLedger.user_id == u.id,
+                                ClientProfitLedger.symbol == disp_sym,
+                                ClientProfitLedger.executed_at >= today_start_ist.astimezone(timezone.utc)
+                            )
+                            .first()
+                        )
+                        if not existing:
+                            rec = ClientProfitLedger(
+                                user_id=u.id,
+                                email=u.email,
+                                name=u.name,
+                                phone=u.phone,
+                                client_id=u.client_id,
+                                venue="tradejini",
+                                symbol=disp_sym,
+                                side="buy" if buy_qty >= sell_qty else "sell",
+                                size=qty,
+                                entry_price=buy_avg,
+                                exit_price=sell_avg if sell_qty > 0 else None,
+                                realized_pnl_inr=rpnl,
+                                fee_inr=round(qty * 0.05 + 40.0, 2),
+                                status="closed" if net_qty == 0 else "open",
+                                executed_at=now_ist.astimezone(timezone.utc),
+                                closed_at=now_ist.astimezone(timezone.utc) if net_qty == 0 else None
+                            )
+                            db.add(rec)
+                        else:
+                            existing.realized_pnl_inr = rpnl
+                            existing.entry_price = buy_avg
+                            existing.exit_price = sell_avg if sell_qty > 0 else existing.exit_price
+                            existing.size = qty
+                            existing.status = "closed" if net_qty == 0 else "open"
+                            if net_qty == 0 and not existing.closed_at:
+                                existing.closed_at = now_ist.astimezone(timezone.utc)
+
+                for t in trades_list:
+                    sym_obj = t.get("sym") or {}
+                    disp_sym = sym_obj.get("dispSym") or sym_obj.get("trdSym") or t.get("symId") or "Unknown"
+                    tj_trades.append({
+                        "order_id": t.get("orderId"),
+                        "fill_id": t.get("fillId"),
+                        "symbol": disp_sym,
+                        "side": t.get("side"),
+                        "fill_qty": t.get("fillQty"),
+                        "fill_price": t.get("fillPrice"),
+                        "fill_value": t.get("fillValue"),
+                        "time": t.get("time"),
+                    })
+
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                print(f"[Ledger Profits Sync] Tradejini error: {e}")
+
+    # 2. Query ClientProfitLedger with Date Range Filtering
+    q = (
         db.query(ClientProfitLedger)
         .filter(
             or_(
@@ -1112,17 +1232,163 @@ def admin_get_client_profits(user_id: str, _: User = Depends(auth.require_admin)
                 ClientProfitLedger.email == user_id
             )
         )
-        .order_by(ClientProfitLedger.executed_at.desc())
-        .all()
     )
+
+    # Timeframe calculation (IST based)
+    cutoff = None
+    if timeframe == "today":
+        cutoff = today_start_ist.astimezone(timezone.utc)
+    elif timeframe == "7d":
+        cutoff = (today_start_ist - timedelta(days=7)).astimezone(timezone.utc)
+    elif timeframe == "1m":
+        cutoff = (today_start_ist - timedelta(days=30)).astimezone(timezone.utc)
+    elif timeframe == "3m":
+        cutoff = (today_start_ist - timedelta(days=90)).astimezone(timezone.utc)
+    elif timeframe == "1y":
+        cutoff = (today_start_ist - timedelta(days=365)).astimezone(timezone.utc)
     
-    db_pnl_inr = sum(e.realized_pnl_inr for e in entries)
-    total_fees_inr = sum(e.fee_inr for e in entries)
+    if cutoff:
+        q = q.filter(ClientProfitLedger.executed_at >= cutoff)
     
-    tj_realized_pnl = None
-    tj_positions = []
-    tj_connected = False
-    
+    if from_date:
+        try:
+            fd = datetime.strptime(from_date, "%Y-%m-%d").replace(tzinfo=ist).astimezone(timezone.utc)
+            q = q.filter(ClientProfitLedger.executed_at >= fd)
+        except Exception:
+            pass
+    if to_date:
+        try:
+            td = (datetime.strptime(to_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=ist)).astimezone(timezone.utc)
+            q = q.filter(ClientProfitLedger.executed_at <= td)
+        except Exception:
+            pass
+
+    entries = q.order_by(ClientProfitLedger.executed_at.desc()).all()
+
+    # 3. Group by Day and Month
+    daily_map = {}
+    monthly_map = {}
+
+    total_gross_pnl = 0.0
+    total_fees = 0.0
+    wins_count = 0
+    losses_count = 0
+
+    for e in entries:
+        dt_ist = e.executed_at.astimezone(ist) if e.executed_at else now_ist
+        day_key = dt_ist.strftime("%Y-%m-%d")
+        month_key = dt_ist.strftime("%Y-%m")
+        day_formatted = dt_ist.strftime("%d %b %Y")
+        month_formatted = dt_ist.strftime("%B %Y")
+
+        pnl = e.realized_pnl_inr or 0.0
+        fee = e.fee_inr or 0.0
+        total_gross_pnl += pnl
+        total_fees += fee
+
+        is_win = pnl > 0
+        is_loss = pnl < 0
+        if is_win:
+            wins_count += 1
+        elif is_loss:
+            losses_count += 1
+
+        entry_dict = {
+            "id": e.id,
+            "symbol": e.symbol,
+            "side": e.side,
+            "size": e.size,
+            "entry_price": e.entry_price,
+            "exit_price": e.exit_price,
+            "realized_pnl_inr": round(pnl, 2),
+            "fee_inr": round(fee, 2),
+            "net_pnl_inr": round(pnl - fee, 2),
+            "status": e.status,
+            "executed_at": e.executed_at.isoformat() if e.executed_at else None,
+            "time_ist": dt_ist.strftime("%H:%M:%S"),
+        }
+
+        # Daily breakdown accumulation
+        if day_key not in daily_map:
+            daily_map[day_key] = {
+                "date": day_key,
+                "formatted_date": day_formatted,
+                "gross_pnl_inr": 0.0,
+                "total_fees_inr": 0.0,
+                "net_pnl_inr": 0.0,
+                "total_trades": 0,
+                "wins": 0,
+                "losses": 0,
+                "trades": []
+            }
+        d = daily_map[day_key]
+        d["gross_pnl_inr"] += pnl
+        d["total_fees_inr"] += fee
+        d["net_pnl_inr"] += (pnl - fee)
+        d["total_trades"] += 1
+        if is_win:
+            d["wins"] += 1
+        elif is_loss:
+            d["losses"] += 1
+        d["trades"].append(entry_dict)
+
+        # Monthly breakdown accumulation
+        if month_key not in monthly_map:
+            monthly_map[month_key] = {
+                "month": month_key,
+                "formatted_month": month_formatted,
+                "gross_pnl_inr": 0.0,
+                "total_fees_inr": 0.0,
+                "net_pnl_inr": 0.0,
+                "total_trades": 0,
+                "wins": 0,
+                "losses": 0,
+            }
+        m = monthly_map[month_key]
+        m["gross_pnl_inr"] += pnl
+        m["total_fees_inr"] += fee
+        m["net_pnl_inr"] += (pnl - fee)
+        m["total_trades"] += 1
+        if is_win:
+            m["wins"] += 1
+        elif is_loss:
+            m["losses"] += 1
+
+    # Format lists sorted by newest date/month first
+    daily_breakdown = sorted(
+        [
+            {
+                **d,
+                "gross_pnl_inr": round(d["gross_pnl_inr"], 2),
+                "total_fees_inr": round(d["total_fees_inr"], 2),
+                "net_pnl_inr": round(d["net_pnl_inr"], 2),
+                "win_rate_pct": round((d["wins"] / d["total_trades"] * 100) if d["total_trades"] > 0 else 0.0, 1)
+            }
+            for d in daily_map.values()
+        ],
+        key=lambda x: x["date"],
+        reverse=True
+    )
+
+    monthly_breakdown = sorted(
+        [
+            {
+                **m,
+                "gross_pnl_inr": round(m["gross_pnl_inr"], 2),
+                "total_fees_inr": round(m["total_fees_inr"], 2),
+                "net_pnl_inr": round(m["net_pnl_inr"], 2),
+                "win_rate_pct": round((m["wins"] / m["total_trades"] * 100) if m["total_trades"] > 0 else 0.0, 1)
+            }
+            for m in monthly_map.values()
+        ],
+        key=lambda x: x["month"],
+        reverse=True
+    )
+
+    total_count = len(entries)
+    win_rate = round((wins_count / total_count * 100) if total_count > 0 else 0.0, 1)
+    net_pnl = total_gross_pnl - total_fees
+
     client_info = {
         "user_id": u.id if u else query_id,
         "email": u.email if u else (entries[0].email if entries else "Unknown"),
@@ -1131,30 +1397,28 @@ def admin_get_client_profits(user_id: str, _: User = Depends(auth.require_admin)
         "client_id": u.client_id if u else (entries[0].client_id if entries else (user_id if not user_id.startswith("user_") else None)),
         "status": u.payment_status if u else "archived",
     }
-    
-    if u:
-        conn = db.query(TradejiniConnection).filter_by(user_id=u.id).one_or_none()
-        if conn and tradejini_auth.has_auto_creds(conn) and conn.status == "connected":
-            try:
-                token = tradejini_auth.ensure_client_token(db, conn)
-                tj_client = tradejini.TradejiniClient(token, api_key=conn.api_key)
-                tj_realized_pnl = tj_client.day_realized_pnl_inr()
-                tj_positions = tj_client.open_positions()
-                tj_connected = True
-            except Exception as e:
-                print(f"[Ledger Profits] Tradejini fetch note: {e}")
-
-    final_booked_pnl = tj_realized_pnl if (tj_realized_pnl is not None) else db_pnl_inr
 
     return {
         "client": client_info,
+        "timeframe": timeframe,
         "tradejini_connected": tj_connected,
-        "booked_pnl_inr": round(final_booked_pnl, 2),
-        "db_realized_pnl_inr": round(db_pnl_inr, 2),
-        "tradejini_booked_pnl_inr": tj_realized_pnl,
-        "total_fees_inr": round(total_fees_inr, 2),
-        "total_trades": len(entries),
+        "tradejini_today_realized_pnl": round(tj_today_realized_pnl, 2),
+        "summary": {
+            "gross_pnl_inr": round(total_gross_pnl, 2),
+            "total_fees_inr": round(total_fees, 2),
+            "net_pnl_inr": round(net_pnl, 2),
+            "total_trades": total_count,
+            "wins": wins_count,
+            "losses": losses_count,
+            "win_rate_pct": win_rate,
+        },
+        "booked_pnl_inr": round(total_gross_pnl, 2),
+        "total_fees_inr": round(total_fees, 2),
+        "total_trades": total_count,
         "tradejini_positions": tj_positions,
+        "tradejini_trades": tj_trades,
+        "daily_breakdown": daily_breakdown,
+        "monthly_breakdown": monthly_breakdown,
         "entries": [
             {
                 "id": e.id,
@@ -1166,6 +1430,7 @@ def admin_get_client_profits(user_id: str, _: User = Depends(auth.require_admin)
                 "realized_pnl_inr": round(e.realized_pnl_inr, 2),
                 "realized_pnl_usd": round(e.realized_pnl_usd, 2),
                 "fee_inr": round(e.fee_inr, 2),
+                "net_pnl_inr": round((e.realized_pnl_inr or 0.0) - (e.fee_inr or 0.0), 2),
                 "status": e.status,
                 "executed_at": e.executed_at.isoformat() if e.executed_at else None,
             }
