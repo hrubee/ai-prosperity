@@ -1105,10 +1105,18 @@ def admin_get_client_profits(
 ):
     u = db.get(User, user_id)
     if u is None:
-        # Search by client_id or email
-        u = db.query(User).filter(or_(User.client_id == user_id, User.email == user_id)).one_or_none()
+        u_lower = (user_id or "").strip().lower()
+        u = db.query(User).filter(
+            or_(
+                func.lower(User.client_id) == u_lower,
+                func.lower(User.email) == u_lower,
+                func.lower(User.name) == u_lower
+            )
+        ).first()
     
     query_id = u.id if u else user_id
+    u_client_id = u.client_id if u else user_id
+    u_email = u.email if u else user_id
 
     from zoneinfo import ZoneInfo
     ist = ZoneInfo("Asia/Kolkata")
@@ -1228,8 +1236,8 @@ def admin_get_client_profits(
         .filter(
             or_(
                 ClientProfitLedger.user_id == query_id,
-                ClientProfitLedger.client_id == user_id,
-                ClientProfitLedger.email == user_id
+                func.lower(ClientProfitLedger.client_id) == (u_client_id or "").lower(),
+                func.lower(ClientProfitLedger.email) == (u_email or "").lower()
             )
         )
     )
