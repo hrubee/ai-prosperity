@@ -81,18 +81,18 @@ export default function TradejiniConnectPage() {
                 in and create a new app to get your API key.
               </p>
               <p className="text-sm text-muted">
-                Open the{" "}
-                <a
-                  href="https://developer.tradejini.com/dashboard"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-gold-400 underline"
-                >
-                  Tradejini developer portal
-                </a>{" "}
-                and create a new app. Keep the <b className="text-slate-200">API key</b> it
-                generates — you&apos;ll need it in a moment.
+                Open the Tradejini developer portal and create a new app. Keep the{" "}
+                <b className="text-slate-200">API key</b> it generates — you&apos;ll need it in a moment.
               </p>
+              <a
+                href="https://developer.tradejini.com/dashboard"
+                target="_blank"
+                rel="noreferrer"
+                className="btn-ghost flex items-center justify-center gap-2 w-full py-2.5 text-sm font-semibold !text-gold-400 !border-gold-500/40 hover:!bg-gold-500/10 transition shadow-sm"
+              >
+                <span>Open Tradejini Developer Portal</span>
+                <span className="text-base font-bold leading-none">↗</span>
+              </a>
               <ul className="space-y-2 rounded-xl border border-ink-700 bg-ink-800/40 p-4 text-sm text-slate-300">
                 <li>✓ Log in with your Tradejini trading account</li>
                 <li>✓ Create a new app (any name)</li>
