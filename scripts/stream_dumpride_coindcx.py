@@ -31,8 +31,8 @@ TF = os.environ.get("DUMPRIDE_TF", "4h")
 TF_SEC = {"15m": 900, "30m": 1800, "1h": 3600, "2h": 7200, "4h": 14400, "8h": 28800, "12h": 43200}.get(TF, 14400)
 TF_MS = TF_SEC * 1000
 
-SPIKE_VOL_MULT = float(os.environ.get("DUMPRIDE_SPIKE_VOL", "20.0"))
-MIN_PUMP_PCT = float(os.environ.get("DUMPRIDE_MIN_PUMP_PCT", "3.0"))
+SPIKE_VOL_MULT = float(os.environ.get("DUMPRIDE_SPIKE_VOL", "10.0"))
+MIN_PUMP_PCT = float(os.environ.get("DUMPRIDE_MIN_PUMP_PCT", "0.0"))
 ATR_PERIOD = int(os.environ.get("DUMPRIDE_ATR_PERIOD", "14"))
 SL_ATR_MULT = float(os.environ.get("DUMPRIDE_SL_ATR_MULT", "1.0"))
 RR_TARGET = float(os.environ.get("DUMPRIDE_RR_TARGET", "2.0"))
@@ -44,6 +44,8 @@ RISK_FRAC = float(os.environ.get("DUMPRIDE_RISK_FRAC", "0.01")) # 1% risk per tr
 DEFAULT_LEVERAGE = int(os.environ.get("DUMPRIDE_LEVERAGE", "10"))
 MAX_CONCURRENT = int(os.environ.get("DUMPRIDE_MAX_CONCURRENT", "10"))
 MIN_RISK_SPREAD_PCT = float(os.environ.get("DUMPRIDE_MIN_RISK_PCT", "0.008")) # 0.8% min distance
+MIN_4H_NOTIONAL_VOL = float(os.environ.get("DUMPRIDE_MIN_VOL_USDT", "100000.0")) # $100k min volume threshold
+MIN_REQUIRED_LEVERAGE = int(os.environ.get("DUMPRIDE_MIN_LEVERAGE", "10")) # Must support >=10x leverage
 
 ARMED = os.environ.get("LIVE_ARMED", "0") == "1"
 START_BAL_INR = float(os.environ.get("DUMPRIDE_START_BAL_INR", "16000.0"))
@@ -271,14 +273,15 @@ def post_entry_chart(base: str, entry_px: float, sl_px: float, tp_px: float, acc
     )
     return render_and_send_chart(base, entry_px, sl_px, tp_px, caption)
 
-def post_exit_chart(base: str, exit_px: float, entry_px: float, initial_sl_px: float, pnl_usdt: float, reason: str, reply_to_msg_id: int = None, account: str = "Primary"):
+def post_exit_chart(base: str, exit_px: float, entry_px: float, initial_sl_px: float, pnl_usdt: float, pnl_pct: float, reason: str, reply_to_msg_id: int = None, account: str = "Primary"):
     pnl_sign = "+" if pnl_usdt >= 0 else ""
     caption = (
         f"🏁 *DUMPRIDE 4H POSITION CLOSED*\n\n"
         f"• *Asset*: `#{base}/USDT` ({account})\n"
         f"• *Reason*: *{reason}*\n"
+        f"• *Entry Price*: `${entry_px:.4f}`\n"
         f"• *Exit Price*: `${exit_px:.4f}`\n"
-        f"• *PnL*: `{pnl_sign}${pnl_usdt:.2f} USDT`\n"
+        f"• *PnL*: `{pnl_sign}${pnl_usdt:.2f} USDT` (`{pnl_sign}{pnl_pct:.2f}%`)\n"
         f"• *Status*: Position Liquidated / Reconciled"
     )
     return send_telegram_alert(caption, reply_to_msg_id=reply_to_msg_id)
@@ -359,6 +362,17 @@ def evaluate_coin_4h_signal(base, adapter=None, include_forming=False):
         vol_mult = vols[ci] / base_v
         
         if vol_mult < SPIKE_VOL_MULT:
+            return None
+
+        # 4H Notional Volume Filter ($100k min to prevent illiquid micro-cap phantom spikes)
+        notional_vol_usdt = float(vols[ci] * closes[ci])
+        if notional_vol_usdt < MIN_4H_NOTIONAL_VOL:
+            return None
+
+        # Minimum Leverage Cap Filter (Avoid restricted microcaps with <10x leverage)
+        inst = adapter.instrument(base) if hasattr(adapter, "instrument") else {}
+        max_lev = float(inst.get("max_leverage_short") or DEFAULT_LEVERAGE)
+        if max_lev < MIN_REQUIRED_LEVERAGE:
             return None
             
         # 14-period ATR
@@ -483,7 +497,11 @@ def run_dumpride_engine():
     last_prearm_sweep_time = 0
     active_positions = {}
     armed_watchlist = {} # {symbol: candidate_dict}
-    last_executed_bucket = None
+    
+    # Initialize with current bucket so service restart mid-cycle doesn't trigger stale candles
+    init_cur_bucket, _, _ = get_4h_timing()
+    last_executed_bucket = init_cur_bucket
+    last_standby_log_time = 0
     
     while True:
         try:
@@ -498,61 +516,89 @@ def run_dumpride_engine():
                     open_pos = A.fetch_positions()
                     active_symbols = set(p.get("base") for p in open_pos if float(p.get("active_units") or 0) != 0)
                     
-                    # Check for closed positions
+                    # Check for closed positions (with debounce protection)
                     for sym in list(active_positions.keys()):
-                        if sym not in active_symbols:
-                            pos_info = active_positions.pop(sym)
-                            duration_mins = (now_ms - pos_info.get("entry_t", now_ms)) / 60000.0
-                            log(f"[{sym}] 🏁 POSITION CLOSED ON EXCHANGE. Duration: {duration_mins:.1f} mins.")
-                            
-                            # Fetch real exit fill from CoinDCX
-                            real_exit_px, fill_qty, fees = A.fetch_executed_trade_vwap(sym, side="buy")
-                            if real_exit_px <= 0:
-                                real_exit_px = pos_info.get("tp_px", pos_info.get("entry_px"))
+                        pos_info = active_positions[sym]
+                        if sym in active_symbols:
+                            pos_info["seen_active"] = True
+                            pos_info["missing_count"] = 0
+                        else:
+                            # Position is not returned in active positions list
+                            pos_info["missing_count"] = pos_info.get("missing_count", 0) + 1
+                            # Require at least 2 consecutive missing cycles (10s) or previous active confirmation
+                            if pos_info.get("seen_active") or pos_info["missing_count"] >= 2:
+                                active_positions.pop(sym, None)
+                                duration_mins = (now_ms - pos_info.get("entry_t", now_ms)) / 60000.0
+                                log(f"[{sym}] 🏁 POSITION CLOSED ON EXCHANGE. Duration: {duration_mins:.1f} mins.")
                                 
-                            risk_dist = max(abs(pos_info.get("sl_px", 0) - pos_info.get("entry_px", 0)), 1e-9)
-                            r_multiple = (pos_info.get("entry_px", 0) - real_exit_px) / risk_dist
-                            pnl_usdt = (pos_info.get("entry_px", 0) - real_exit_px) * pos_info.get("qty", 0)
-                            reason = "TP Target Hit" if r_multiple > 0 else "Stop Loss Hit"
-                            
-                            if TELEGRAM_ENABLED:
-                                try:
-                                    post_exit_chart(
-                                        base=sym,
-                                        exit_px=real_exit_px,
-                                        entry_px=pos_info.get("entry_px", 0),
-                                        initial_sl_px=pos_info.get("sl_px", 0),
-                                        pnl_usdt=pnl_usdt,
-                                        reason=reason,
-                                        reply_to_msg_id=pos_info.get("tg_msg_id"),
-                                        account=f"DumpRide ({pos_info.get('account', 'Primary')})"
-                                    )
-                                except Exception as te:
-                                    log(f"Telegram exit chart error: {te}")
+                                # Fetch real exit fill from CoinDCX
+                                real_exit_px, fill_qty, fees = A.fetch_executed_trade_vwap(sym, side="buy")
+                                if real_exit_px <= 0:
+                                    try:
+                                        curr_px = A.get_current_price(sym)
+                                        real_exit_px = curr_px if curr_px > 0 else pos_info.get("entry_px", 0)
+                                    except Exception:
+                                        real_exit_px = pos_info.get("entry_px", 0)
+                                    
+                                pnl_usdt = (pos_info.get("entry_px", 0) - real_exit_px) * pos_info.get("qty", 0)
+                                pnl_pct = ((pos_info.get("entry_px", 0) - real_exit_px) / max(pos_info.get("entry_px", 1), 1e-9)) * 100.0
+                                
+                                if pnl_usdt > 0:
+                                    reason = "🎯 TP Target Hit / Gain"
+                                elif pnl_usdt < 0:
+                                    reason = "🛑 Stop Loss Hit / Loss"
+                                else:
+                                    reason = "🏁 Position Reconciled (Flat)"
+                                
+                                if TELEGRAM_ENABLED:
+                                    try:
+                                        post_exit_chart(
+                                            base=sym,
+                                            exit_px=real_exit_px,
+                                            entry_px=pos_info.get("entry_px", 0),
+                                            initial_sl_px=pos_info.get("sl_px", 0),
+                                            pnl_usdt=pnl_usdt,
+                                            pnl_pct=pnl_pct,
+                                            reason=reason,
+                                            reply_to_msg_id=pos_info.get("tg_msg_id"),
+                                            account=f"DumpRide ({pos_info.get('account', 'Primary')})"
+                                        )
+                                    except Exception as te:
+                                        log(f"Telegram exit chart error: {te}")
                 except Exception as pe:
                     log(f"Reconciliation error: {pe}")
 
-            # 2. ZERO-LATENCY FAST-TRIGGER AT EXACT 4H CANDLE CLOSE (sec_to_close <= 1.5s or just crossed)
-            if sec_to_close <= 1.5 and cur_bucket_start != last_executed_bucket:
-                if armed_watchlist:
-                    log(f"\n⚡ [FAST-TRIGGER] 4H CANDLE CLOSE REACHED! Firing instant execution on {len(armed_watchlist)} pre-armed candidates...")
-                    
-                    # Concurrently confirm and place orders on armed watchlist
-                    candidates_to_execute = list(armed_watchlist.values())
-                    armed_watchlist = {}
-                    last_executed_bucket = cur_bucket_start
-                    
+            # 2. ZERO-LATENCY FAST-TRIGGER & POST-CLOSE CATCH-ALL AT EXACT 4H CANDLE CLOSE
+            # Triggers as soon as sec_to_close <= 1.5s OR when the 4H bucket rolls over into a new bar
+            is_bucket_rollover = (cur_bucket_start != last_executed_bucket)
+            if (sec_to_close <= 1.5 or is_bucket_rollover):
+                last_executed_bucket = cur_bucket_start
+                log(f"\n⚡ [4H CANDLE CLOSE TRIGGERED] Firing execution engine for 4H bucket {cur_bucket_start} (sec_to_close={sec_to_close:.1f}s)...")
+                
+                # A. Candidates from pre-arm watchlist
+                candidates_to_execute = list(armed_watchlist.values())
+                armed_watchlist = {}
+                
+                # B. Immediate Post-Close Sweep across universe to catch coins that crossed >= 10x in final minutes
+                universe = A.active_bases()
+                if universe:
+                    log(f"🔍 [POST-CLOSE CATCH-ALL] Sweeping universe for closed 4H candle volume spikes...")
+                    with ThreadPoolExecutor(max_workers=40) as executor:
+                        futures = {executor.submit(evaluate_coin_4h_signal, base, A, False): base for base in universe}
+                        for fut in as_completed(futures):
+                            try:
+                                sig = fut.result()
+                                if sig and sig["symbol"] not in [c["symbol"] for c in candidates_to_execute]:
+                                    candidates_to_execute.append(sig)
+                            except Exception:
+                                pass
+                                
+                if candidates_to_execute:
+                    log(f"🎯 [EXECUTING] {len(candidates_to_execute)} confirmed 4H volume spike candidates:")
                     for sig in candidates_to_execute:
                         base = sig["symbol"]
+                        log(f"   -> #{base}: Vol {sig['vol_mult']:.1f}x | Pump {sig['pump_pct']:+.1f}% | Entry: {sig['entry_px']}")
                         
-                        # Re-confirm closing price and volume in <150ms
-                        try:
-                            live_sig = evaluate_coin_4h_signal(base, A, include_forming=False)
-                            if live_sig:
-                                sig = live_sig
-                        except Exception:
-                            pass
-                            
                         # Check SQLite to avoid duplicate entry
                         conn = sqlite3.connect(DB_FILE)
                         c = conn.cursor()
@@ -575,7 +621,7 @@ def run_dumpride_engine():
                         pos_rec = execute_dumpride_short(sig, A, account_label="Primary")
                         if pos_rec:
                             active_positions[sig["symbol"]] = pos_rec
-                            log(f"⚡ [FAST-TRIGGER] #{sig['symbol']} executed in {(time.time()-t0)*1000:.0f}ms!")
+                            log(f"⚡ [FAST-TRIGGER] #{sig['symbol']} Primary executed in {(time.time()-t0)*1000:.0f}ms!")
                             
                         # Execute Secondary Account in parallel if enabled
                         if A2:
@@ -591,14 +637,25 @@ def run_dumpride_engine():
                         conn.commit()
                         conn.close()
                 else:
-                    last_executed_bucket = cur_bucket_start
+                    log("ℹ️ No confirmed >= 10.0x volume spikes on closed 4H candle.")
                     
                 time.sleep(2)
                 continue
 
-            # 3. PRE-ARMED UNIVERSE SCAN (Runs every 20s when inside the last 10m window, or every 45s outside)
-            scan_interval = 20.0 if sec_to_close <= PREARM_WINDOW_SEC else 45.0
-            if time.time() - last_prearm_sweep_time >= scan_interval:
+            # 3. PRE-ARMED UNIVERSE SCAN (Engages only in the last 10 minutes of 4H bar, locks out at T <= 90s)
+            in_prearm_window = (sec_to_close <= PREARM_WINDOW_SEC)
+            
+            if not in_prearm_window:
+                # Standby mode (log once every 60 seconds)
+                if time.time() - last_standby_log_time >= 60.0:
+                    last_standby_log_time = time.time()
+                    log(f"⏳ [STANDBY] Next 4H close in {mins_to_close // 60}h {mins_to_close % 60}m {secs_rem:02d}s. Pre-arm sweeps activate at T-10m.")
+                time.sleep(1)
+                continue
+
+            # Inside the pre-arm window (T-10m to T-90s)
+            can_sweep = (sec_to_close > 90.0)
+            if can_sweep and (time.time() - last_prearm_sweep_time >= 20.0):
                 last_prearm_sweep_time = time.time()
                 
                 # Fetch universe of active perpetual coins
@@ -612,15 +669,12 @@ def run_dumpride_engine():
                         universe = []
                         
                 if not universe:
-                    time.sleep(5)
+                    time.sleep(2)
                     continue
                     
-                # In the last 10m pre-arm window, evaluate forming candles; outside, evaluate last closed candles
-                in_prearm_window = (sec_to_close <= PREARM_WINDOW_SEC)
-                
                 candidate_signals = []
                 with ThreadPoolExecutor(max_workers=40) as executor:
-                    futures = {executor.submit(evaluate_coin_4h_signal, base, A, in_prearm_window): base for base in universe}
+                    futures = {executor.submit(evaluate_coin_4h_signal, base, A, True): base for base in universe}
                     for fut in as_completed(futures):
                         try:
                             sig = fut.result()
@@ -642,18 +696,14 @@ def run_dumpride_engine():
                         filtered_candidates.append(sig)
                 conn.close()
                 
-                if in_prearm_window:
-                    # Update Armed Watchlist
-                    armed_watchlist = {sig["symbol"]: sig for sig in filtered_candidates}
-                    if armed_watchlist:
-                        log(f"🎯 [PRE-ARM WATCHLIST] {len(armed_watchlist)} candidates armed for upcoming 4H close (T-{mins_to_close:02d}m {secs_rem:02d}s):")
-                        for sym, sig in armed_watchlist.items():
-                            log(f"   -> #{sym}: Forming Spike {sig['vol_mult']:.1f}x | Pump +{sig['pump_pct']:.1f}% | Pre-calc SL: {sig['sl_px']:.6g} | TP: {sig['tp_px']:.6g}")
-                    else:
-                        log(f"🔍 [PRE-ARM SCAN] Universe swept ({len(universe)} coins). 0 volume spikes detected (T-{mins_to_close:02d}m {secs_rem:02d}s to 4H close).")
+                # Update Armed Watchlist
+                armed_watchlist = {sig["symbol"]: sig for sig in filtered_candidates}
+                if armed_watchlist:
+                    log(f"🎯 [PRE-ARM WATCHLIST] {len(armed_watchlist)} candidates armed for upcoming 4H close (T-{mins_to_close:02d}m {secs_rem:02d}s):")
+                    for sym, sig in armed_watchlist.items():
+                        log(f"   -> #{sym}: Forming Spike {sig['vol_mult']:.1f}x | Pump +{sig['pump_pct']:.1f}% | Pre-calc SL: {sig['sl_px']:.6g} | TP: {sig['tp_px']:.6g}")
                 else:
-                    # Outside pre-arm window periodic status
-                    log(f"⏳ [STANDBY] Next 4H close in {mins_to_close // 60}h {mins_to_close % 60}m {secs_rem:02d}s. Pre-arm sweeps activate at T-10m.")
+                    log(f"🔍 [PRE-ARM SCAN] Universe swept ({len(universe)} coins). 0 volume spikes detected (T-{mins_to_close:02d}m {secs_rem:02d}s to 4H close).")
                     
             time.sleep(1)
         except KeyboardInterrupt:
