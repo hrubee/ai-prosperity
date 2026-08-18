@@ -391,49 +391,6 @@ export default function ClientProfitsPage({ params }: { params: Promise<{ id: st
                 </div>
               )}
             </div>
-
-            {/* Live Tradejini Positions (if available) */}
-            {data.tradejini_connected && data.tradejini_positions && data.tradejini_positions.length > 0 && (
-              <div className="card p-5 mb-6 border-gold-500/30 bg-slate-900/50">
-                <h2 className="text-sm font-semibold text-gold-400 uppercase tracking-wider mb-4 flex items-center gap-2">
-                  <span>⚡ Live Tradejini Account Positions (Direct API)</span>
-                </h2>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs whitespace-nowrap">
-                    <thead className="text-left uppercase tracking-wider text-slate-400 border-b border-slate-800">
-                      <tr>
-                        <th className="pb-2.5">Symbol</th>
-                        <th className="pb-2.5">Product</th>
-                        <th className="pb-2.5 text-right">Net Qty</th>
-                        <th className="pb-2.5 text-right">Buy Qty / Avg</th>
-                        <th className="pb-2.5 text-right">Sell Qty / Avg</th>
-                        <th className="pb-2.5 text-right">Booked PnL</th>
-                        <th className="pb-2.5 text-center">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800/60 text-slate-300 font-mono">
-                      {data.tradejini_positions.map((p, idx) => (
-                        <tr key={idx} className="hover:bg-slate-800/30">
-                          <td className="py-2.5 font-sans font-bold text-white">{p.symbol}</td>
-                          <td className="text-slate-400 uppercase">{p.product}</td>
-                          <td className="text-right">{p.net_qty}</td>
-                          <td className="text-right">{p.buy_qty} @ ₹{p.buy_avg_price}</td>
-                          <td className="text-right">{p.sell_qty} @ ₹{p.sell_avg_price}</td>
-                          <td className={`text-right font-bold ${p.realized_pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                            {formatInr(p.realized_pnl)}
-                          </td>
-                          <td className="text-center font-sans">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${p.net_qty === 0 ? "bg-emerald-500/20 text-emerald-300" : "bg-gold-500/20 text-gold-300"}`}>
-                              {p.net_qty === 0 ? "Closed" : "Open"}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
           </>
         ) : null}
       </div>
