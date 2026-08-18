@@ -25,7 +25,7 @@ from .config import settings
 from .crypto import decrypt_secret, encrypt_secret
 from .db import get_db
 from .delta import DeltaClient, DeltaError
-from .models import BrainEvent, ClientOrder, ClientProfitLedger, DeltaConnection, DhanConnection, CoinDCXConnection, PaymentScreenshot, PricingPlan, Signal, Subscription, TradejiniConnection, User
+from .models import BrainEvent, ClientOrder, ClientProfitLedger, DeltaConnection, DhanConnection, CoinDCXConnection, PaymentScreenshot, PricingPlan, Signal, Subscription, TradejiniConnection, User, EntitlementCounter, StraddlePosition
 from .packages import PACKAGES
 
 log = logging.getLogger("api")
