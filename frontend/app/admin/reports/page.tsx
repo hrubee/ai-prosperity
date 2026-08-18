@@ -80,24 +80,30 @@ export default function AdminReportsPage() {
       "Gross Profit (INR)",
       "Brokerage & Fees (INR)",
       "Net Profit (INR)",
+      "net 40%",
     ];
 
-    const rows = data.clients.map((c) => [
-      `"${(c.name || "Client").replace(/"/g, '""')}"`,
-      `"${c.phone || "—"}"`,
-      `"${c.client_id || "—"}"`,
-      `"${c.email || "—"}"`,
-      `"${data.date_range}"`,
-      c.total_trades,
-      c.winning_trades,
-      c.losing_trades,
-      `${c.win_rate_pct}%`,
-      c.gross_profit_inr.toFixed(2),
-      c.fee_inr.toFixed(2),
-      c.net_profit_inr.toFixed(2),
-    ]);
+    const rows = data.clients.map((c) => {
+      const net40 = c.net_profit_inr * 0.4;
+      return [
+        `"${(c.name || "Client").replace(/"/g, '""')}"`,
+        `"${c.phone || "—"}"`,
+        `"${c.client_id || "—"}"`,
+        `"${c.email || "—"}"`,
+        `"${data.date_range}"`,
+        c.total_trades,
+        c.winning_trades,
+        c.losing_trades,
+        `${c.win_rate_pct}%`,
+        c.gross_profit_inr.toFixed(2),
+        c.fee_inr.toFixed(2),
+        c.net_profit_inr.toFixed(2),
+        net40.toFixed(2),
+      ];
+    });
 
     // Summary row
+    const totalNet40 = data.summary.total_net_profit_inr * 0.4;
     rows.push([
       `"TOTAL (All Clients)"`,
       `""`,
@@ -111,6 +117,7 @@ export default function AdminReportsPage() {
       data.summary.total_gross_profit_inr.toFixed(2),
       data.summary.total_fees_inr.toFixed(2),
       data.summary.total_net_profit_inr.toFixed(2),
+      totalNet40.toFixed(2),
     ]);
 
     const csvContent = [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
@@ -230,10 +237,10 @@ export default function AdminReportsPage() {
 
         {/* Aggregate KPI Summary Cards */}
         {data && (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 mb-6">
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-5 mb-6">
             <div className="card p-5 border-slate-800 bg-slate-900/50">
-              <p className="text-xs uppercase tracking-wider text-slate-400 font-medium">Active Report Period</p>
-              <p className="mt-1.5 text-lg font-bold text-sky-400 font-mono truncate">{data.date_range}</p>
+              <p className="text-xs uppercase tracking-wider text-slate-400 font-medium">Report Period</p>
+              <p className="mt-1.5 text-base font-bold text-sky-400 font-mono truncate">{data.date_range}</p>
               <p className="text-[11px] text-slate-500 mt-1">
                 {data.summary.active_trading_clients} of {data.summary.total_clients} clients traded
               </p>
@@ -268,6 +275,14 @@ export default function AdminReportsPage() {
               </p>
               <p className="text-[11px] text-slate-400 mt-1">Gross: {formatInr(data.summary.total_gross_profit_inr)}</p>
             </div>
+
+            <div className="card p-5 border border-gold-500/40 bg-gold-950/20">
+              <p className="text-xs uppercase tracking-wider text-gold-400 font-medium">Total Net 40% Share</p>
+              <p className="mt-1.5 text-2xl font-bold font-mono text-gold-400">
+                {formatInr(data.summary.total_net_profit_inr * 0.4)}
+              </p>
+              <p className="text-[11px] text-gold-300/80 mt-1">40% Performance Share</p>
+            </div>
           </div>
         )}
 
@@ -279,7 +294,7 @@ export default function AdminReportsPage() {
                 Client Monthly Profits ({filteredClients.length})
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
-                Breakdown of net profits, trades, and fees for <b className="text-white">{data?.date_range}</b>.
+                Breakdown of net profits, 40% share, trades, and fees for <b className="text-white">{data?.date_range}</b>.
               </p>
             </div>
 
@@ -311,13 +326,15 @@ export default function AdminReportsPage() {
                     <th className="pb-3 text-center">Win Rate</th>
                     <th className="pb-3 text-right">Gross Profit</th>
                     <th className="pb-3 text-right">Fees &amp; Taxes</th>
-                    <th className="pb-3 text-right font-bold text-gold-400">Net Profit (INR)</th>
+                    <th className="pb-3 text-right font-bold text-emerald-400">Net Profit (INR)</th>
+                    <th className="pb-3 text-right font-bold text-gold-400">Net 40% (INR)</th>
                     <th className="pb-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 text-slate-300">
                   {filteredClients.map((c) => {
                     const isExpanded = expandedClientId === c.user_id;
+                    const net40 = c.net_profit_inr * 0.4;
 
                     return (
                       <>
@@ -366,6 +383,13 @@ export default function AdminReportsPage() {
                           >
                             {formatInr(c.net_profit_inr)}
                           </td>
+                          <td
+                            className={`text-right font-mono font-bold text-sm ${
+                              net40 >= 0 ? "text-gold-400" : "text-rose-400"
+                            }`}
+                          >
+                            {formatInr(net40)}
+                          </td>
                           <td className="text-right">
                             <div className="flex items-center justify-end gap-2">
                               {c.trades.length > 0 && (
@@ -389,7 +413,7 @@ export default function AdminReportsPage() {
                         {/* Expandable Trade Execution Details */}
                         {isExpanded && c.trades.length > 0 && (
                           <tr className="bg-slate-950/80">
-                            <td colSpan={10} className="p-4 border-y border-slate-800">
+                            <td colSpan={11} className="p-4 border-y border-slate-800">
                               <div className="card p-4 border-slate-800 bg-slate-900/90">
                                 <h4 className="text-xs font-bold text-white uppercase tracking-wider mb-3">
                                   Executed Trades in {data?.date_range} ({c.trades.length} fills)
@@ -405,44 +429,55 @@ export default function AdminReportsPage() {
                                       <th className="pb-2 text-right">Exit Px</th>
                                       <th className="pb-2 text-right">Gross PnL</th>
                                       <th className="pb-2 text-right">Net PnL</th>
+                                      <th className="pb-2 text-right text-gold-400">40% Share</th>
                                     </tr>
                                   </thead>
                                   <tbody className="divide-y divide-slate-800/40 text-slate-300 font-mono">
-                                    {c.trades.map((t) => (
-                                      <tr key={t.id} className="hover:bg-slate-800/40">
-                                        <td className="py-2 text-slate-400">
-                                          {t.executed_at
-                                            ? new Date(t.executed_at).toLocaleString([], {
-                                                month: "short",
-                                                day: "numeric",
-                                                hour: "2-digit",
-                                                minute: "2-digit",
-                                              })
-                                            : "—"}
-                                        </td>
-                                        <td className="font-bold text-white font-sans">{t.symbol}</td>
-                                        <td className="uppercase text-slate-300">{t.side}</td>
-                                        <td className="text-right">{t.size}</td>
-                                        <td className="text-right">₹{t.entry_price.toFixed(2)}</td>
-                                        <td className="text-right">
-                                          {t.exit_price != null ? `₹${t.exit_price.toFixed(2)}` : "—"}
-                                        </td>
-                                        <td
-                                          className={`text-right font-bold ${
-                                            t.realized_pnl_inr >= 0 ? "text-emerald-400" : "text-rose-400"
-                                          }`}
-                                        >
-                                          {formatInr(t.realized_pnl_inr)}
-                                        </td>
-                                        <td
-                                          className={`text-right font-bold ${
-                                            t.net_pnl_inr >= 0 ? "text-emerald-400" : "text-rose-400"
-                                          }`}
-                                        >
-                                          {formatInr(t.net_pnl_inr)}
-                                        </td>
-                                      </tr>
-                                    ))}
+                                    {c.trades.map((t) => {
+                                      const tradeNet40 = t.net_pnl_inr * 0.4;
+                                      return (
+                                        <tr key={t.id} className="hover:bg-slate-800/40">
+                                          <td className="py-2 text-slate-400">
+                                            {t.executed_at
+                                              ? new Date(t.executed_at).toLocaleString([], {
+                                                  month: "short",
+                                                  day: "numeric",
+                                                  hour: "2-digit",
+                                                  minute: "2-digit",
+                                                })
+                                              : "—"}
+                                          </td>
+                                          <td className="font-bold text-white font-sans">{t.symbol}</td>
+                                          <td className="uppercase text-slate-300">{t.side}</td>
+                                          <td className="text-right">{t.size}</td>
+                                          <td className="text-right">₹{t.entry_price.toFixed(2)}</td>
+                                          <td className="text-right">
+                                            {t.exit_price != null ? `₹${t.exit_price.toFixed(2)}` : "—"}
+                                          </td>
+                                          <td
+                                            className={`text-right font-bold ${
+                                              t.realized_pnl_inr >= 0 ? "text-emerald-400" : "text-rose-400"
+                                            }`}
+                                          >
+                                            {formatInr(t.realized_pnl_inr)}
+                                          </td>
+                                          <td
+                                            className={`text-right font-bold ${
+                                              t.net_pnl_inr >= 0 ? "text-emerald-400" : "text-rose-400"
+                                            }`}
+                                          >
+                                            {formatInr(t.net_pnl_inr)}
+                                          </td>
+                                          <td
+                                            className={`text-right font-bold ${
+                                              tradeNet40 >= 0 ? "text-gold-400" : "text-rose-400"
+                                            }`}
+                                          >
+                                            {formatInr(tradeNet40)}
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
                                   </tbody>
                                 </table>
                               </div>
@@ -455,7 +490,7 @@ export default function AdminReportsPage() {
 
                   {filteredClients.length === 0 && (
                     <tr>
-                      <td colSpan={10} className="py-12 text-center text-sm text-slate-500">
+                      <td colSpan={11} className="py-12 text-center text-sm text-slate-500">
                         No clients found for the selected period or search query.
                       </td>
                     </tr>
