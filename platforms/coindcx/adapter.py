@@ -23,6 +23,14 @@ import os
 import time
 import urllib.error
 import urllib.request
+import ssl
+
+try:
+    _ssl_ctx = ssl.create_default_context()
+    _ssl_ctx.check_hostname = False
+    _ssl_ctx.verify_mode = ssl.CERT_NONE
+except Exception:
+    _ssl_ctx = None
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
@@ -57,7 +65,7 @@ class CoinDCXExchangeAdapter:
             headers["X-AUTH-SIGNATURE"] = sig
         req = urllib.request.Request(url, headers=headers)
         try:
-            return json.load(urllib.request.urlopen(req, timeout=self.timeout))
+            return json.load(urllib.request.urlopen(req, timeout=self.timeout, context=_ssl_ctx))
         except urllib.error.HTTPError as e:
             raise CoinDCXError("GET %s -> %s %s" % (url, e.code, e.read().decode()[:200]))
         except Exception as e:
@@ -73,7 +81,7 @@ class CoinDCXExchangeAdapter:
             headers={"Content-Type": "application/json", "X-AUTH-APIKEY": self.key,
                      "X-AUTH-SIGNATURE": sig, "User-Agent": UA})
         try:
-            return json.load(urllib.request.urlopen(req, timeout=self.timeout))
+            return json.load(urllib.request.urlopen(req, timeout=self.timeout, context=_ssl_ctx))
         except urllib.error.HTTPError as e:
             raise CoinDCXError("POST %s -> %s %s" % (path, e.code, e.read().decode()[:250]))
         except Exception as e:

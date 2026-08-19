@@ -403,24 +403,33 @@ async def receive_webhook(request: Request):
                     except Exception:
                         pass
 
-                if sub is not None and not sub.is_active:
-                    positions = client.open_positions()
-                    pos = next((p for p in positions if p["sym_id"] == sym_id), None)
-                    is_close = False
-                    if pos:
-                        net_qty = int(pos.get("net_qty", 0))
-                        if net_qty > 0 and action.lower() == "sell":
-                            is_close = True
-                        elif net_qty < 0 and action.lower() == "buy":
-                            is_close = True
-                            
-                    if not is_close:
-                        await manager.broadcast(json.dumps({
-                            "type": "info",
-                            "account": client.api_key,
-                            "message": f"Subscription expired for {user.email}. Blocked ENTRY trade."
-                        }))
-                        continue
+                # ── ANTI-NAKED OPTION SHORT PROTECTION ────────────────────────────
+                # If Dhan sends a SELL order for an option contract:
+                # We MUST verify that the client actually holds an OPEN LONG position.
+                # If client holds 0 contracts (e.g. entry BUY was rejected or failed), DROP the SELL order!
+                # If client holds fewer contracts than client_qty, cap client_qty to exactly held quantity.
+                if is_opt and action.lower() == "sell":
+                    try:
+                        open_pos_list = client.open_positions()
+                        matching_pos = next(
+                            (p for p in open_pos_list if p.get("sym_id") == sym_id or str(p.get("symbol", "")).upper() == str(trading_symbol).upper()),
+                            None
+                        )
+                        if not matching_pos or matching_pos.get("side") != "buy" or matching_pos.get("size", 0) <= 0:
+                            save_log(f"🚫 [NAKED PROTECTION] Blocked SELL {trading_symbol} for {user.email}: Client holds 0 long contracts (Entry was likely rejected). Aborting order to prevent opening a naked short!")
+                            await manager.broadcast(json.dumps({
+                                "type": "warning",
+                                "account": client.api_key,
+                                "message": f"🚫 [NAKED PROTECTION] Blocked SELL {trading_symbol} for {user.email}: No long position held."
+                            }))
+                            continue
+                        
+                        held_qty = int(matching_pos.get("size", 0))
+                        if client_qty > held_qty:
+                            save_log(f"⚠️ [QTY CAPPED] Capping SELL {trading_symbol} for {user.email} from {client_qty} to held {held_qty} to prevent overshoot.")
+                            client_qty = held_qty
+                    except Exception as pos_check_err:
+                        save_log(f"Position check error for {user.email}: {pos_check_err}")
 
                 resp = client.place_order(
                     sym_id=sym_id,
