@@ -21,13 +21,6 @@ lows = np.array([float(r[3]) for r in raw])
 closes = np.array([float(r[4]) for r in raw])
 vols = np.array([float(r[5]) for r in raw])
 
-# EMA 50
-ema50 = np.zeros(len(closes))
-alpha = 2 / (50 + 1)
-ema50[0] = closes[0]
-for i in range(1, len(closes)):
-    ema50[i] = alpha * closes[i] + (1 - alpha) * ema50[i-1]
-
 # Heikin Ashi Calculation
 ha_close = (opens + highs + lows + closes) / 4.0
 ha_open = np.zeros(len(closes))
@@ -65,7 +58,7 @@ x = np.arange(len(raw))
 w = 0.62
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1. LEFT PANEL: STANDARD RAW CANDLESTICK CHART
+# 1. LEFT PANEL: STANDARD RAW CANDLESTICKS (15-MINUTE)
 # ─────────────────────────────────────────────────────────────────────────────
 for i in range(len(raw)):
     o, h, l, c = opens[i], highs[i], lows[i], closes[i]
@@ -75,9 +68,6 @@ for i in range(len(raw)):
     rect_h = max(abs(c - o), 0.001)
     ax_raw_price.add_patch(patches.Rectangle((x[i]-w/2, rect_y), w, rect_h, facecolor=col, edgecolor=col, alpha=0.85))
 
-# EMA 50 on Raw
-ax_raw_price.plot(x, ema50, color='#ffab00', linestyle='-', linewidth=1.7, label='Trend: EMA 50')
-
 # Trade Levels on Raw
 ax_raw_price.axhline(entry_px, color='#00e5ff', linestyle='--', linewidth=1.4, label=f'Entry: ${entry_px:,.2f}')
 ax_raw_price.axhline(sl_px, color='#ff5252', linestyle='--', linewidth=1.4, label=f'Stop Loss: ${sl_px:,.2f} (-1.2%)')
@@ -86,7 +76,7 @@ ax_raw_price.axhline(tp_px, color='#00e676', linestyle='--', linewidth=1.6, labe
 ax_raw_price.axhspan(entry_px, tp_px, xmin=0.70, xmax=1.0, color='#00e676', alpha=0.12)
 ax_raw_price.axhspan(sl_px, entry_px, xmin=0.70, xmax=1.0, color='#ff1744', alpha=0.12)
 
-ax_raw_price.set_title('📊 RAW CANDLESTICKS (15M) — PRICE ACTION & KEY LEVELS', fontsize=12, fontweight='bold', color='#e2e8f0', pad=10, loc='left')
+ax_raw_price.set_title('RAW CANDLESTICKS (15-MINUTE) — PRICE ACTION & S/R', fontsize=12, fontweight='bold', color='#e2e8f0', pad=10, loc='left')
 ax_raw_price.set_ylabel('Price (USDT)', fontsize=9.5, color='#90a4ae')
 ax_raw_price.legend(loc='upper left', facecolor='#171d27', edgecolor='#2c3848', fontsize=8.5)
 
@@ -96,10 +86,9 @@ ax_raw_vol.bar(x, vols, width=w, color=vol_cols, alpha=0.75)
 vol_ma = np.convolve(vols, np.ones(20)/20, mode='same')
 ax_raw_vol.plot(x, vol_ma, color='#00e5ff', linewidth=1.2, linestyle=':', label='20 SMA Vol')
 ax_raw_vol.set_ylabel('Volume', fontsize=9.5, color='#90a4ae')
-ax_raw_vol.legend(loc='upper left', facecolor='#171d27', edgecolor='#2c3848', fontsize=7.5)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2. RIGHT PANEL: HEIKIN-ASHI MOMENTUM CHART
+# 2. RIGHT PANEL: HEIKIN-ASHI (15-MINUTE)
 # ─────────────────────────────────────────────────────────────────────────────
 for i in range(len(raw)):
     ho, hh, hl, hc = ha_open[i], ha_high[i], ha_low[i], ha_close[i]
@@ -112,12 +101,9 @@ for i in range(len(raw)):
     rect_h = max(abs(hc - ho), 0.001)
     ax_ha_price.add_patch(patches.Rectangle((x[i]-w/2, rect_y), w, rect_h, facecolor=col, edgecolor=col, alpha=0.85))
     
-    # Highlight Flat Bottom (no lower wick on green candle)
+    # Highlight Flat Bottom
     if is_ha_green and ((ho - hl) / max(hh - hl, 0.001) <= 0.05):
         ax_ha_price.scatter(x[i], hl - (0.002 * ho), color='#00e5ff', marker='^', s=45, zorder=5)
-
-# EMA 50 on HA
-ax_ha_price.plot(x, ema50, color='#ffab00', linestyle='-', linewidth=1.7, label='Trend: EMA 50')
 
 # Trade Levels on HA
 ax_ha_price.axhline(entry_px, color='#00e5ff', linestyle='--', linewidth=1.4, label=f'Entry: ${entry_px:,.2f}')
@@ -127,7 +113,7 @@ ax_ha_price.axhline(tp_px, color='#00e676', linestyle='--', linewidth=1.6, label
 ax_ha_price.axhspan(entry_px, tp_px, xmin=0.70, xmax=1.0, color='#00e676', alpha=0.12)
 ax_ha_price.axhspan(sl_px, entry_px, xmin=0.70, xmax=1.0, color='#ff1744', alpha=0.12)
 
-ax_ha_price.set_title('⚡ HEIKIN-ASHI (15M) — MOMENTUM & FLAT-BOTTOM CONFIRMATION', fontsize=12, fontweight='bold', color='#e2e8f0', pad=10, loc='left')
+ax_ha_price.set_title('HEIKIN-ASHI (15-MINUTE) — PURE MOMENTUM CONFIRMATION', fontsize=12, fontweight='bold', color='#e2e8f0', pad=10, loc='left')
 ax_ha_price.set_ylabel('HA Price (USDT)', fontsize=9.5, color='#90a4ae')
 ax_ha_price.legend(loc='upper left', facecolor='#171d27', edgecolor='#2c3848', fontsize=8.5)
 
@@ -136,7 +122,6 @@ ha_vol_cols = ['#00e676' if ha_close[i] >= ha_open[i] else '#ff1744' for i in ra
 ax_ha_vol.bar(x, vols, width=w, color=ha_vol_cols, alpha=0.75)
 ax_ha_vol.plot(x, vol_ma, color='#00e5ff', linewidth=1.2, linestyle=':', label='20 SMA Vol')
 ax_ha_vol.set_ylabel('Volume', fontsize=9.5, color='#90a4ae')
-ax_ha_vol.legend(loc='upper left', facecolor='#171d27', edgecolor='#2c3848', fontsize=7.5)
 
 # Time axis formatting
 date_labels = [time.strftime('%d %b %H:%M', time.gmtime(t/1000)) for t in times]
@@ -145,21 +130,23 @@ for ax in [ax_raw_vol, ax_ha_vol]:
     ax.set_xticklabels(date_labels[::5], rotation=12, fontsize=8.5, color='#90a4ae')
 
 # Super Title
-fig.suptitle('💎 STRATEGY: HEIKIN-ASHI 15M MOMENTUM • #SOL/USDT LONG (1:4.0 RR)', fontsize=15, fontweight='bold', color='#ffffff', y=0.98)
+fig.suptitle('STRATEGY: HEIKIN-ASHI 15-MINUTE MOMENTUM • #SOL/USDT LONG (1:4.0 RR)', fontsize=15, fontweight='bold', color='#ffffff', y=0.98)
 
 plt.subplots_adjust(top=0.92, bottom=0.08, left=0.05, right=0.96)
-out_img = os.path.expanduser('~/.gemini/antigravity-ide/brain/9ab54e65-4280-4e53-95ae-f4165cf8236f/side_by_side_chart.png')
+out_img = os.path.expanduser('~/.gemini/antigravity-ide/brain/9ab54e65-4280-4e53-95ae-f4165cf8236f/side_by_side_chart_15m.png')
 plt.savefig(out_img, dpi=180, facecolor=fig.get_facecolor(), edgecolor='none')
 plt.close()
 
 # Upload Photo to Telegram Group
 token = '8823560993:AAHAtlrSlbedbUJeIBgj2_NUe4-7BxB9Lx8'
 chat_id = '-5535049486'
-caption = f"""💎 *STRATEGY: HEIKIN-ASHI 15M MOMENTUM*
+caption = f"""💎 *STRATEGY: HEIKIN-ASHI 15-MINUTE MOMENTUM*
 
 • *Signal*: `🟢 BULLISH LONG ENTRY`
 • *Pair*: `#SOL/USDT`
-• *Side-by-Side*: Left = Raw Candlesticks | Right = Heikin-Ashi
+• *Timeframe*: `15-Minute Candlesticks`
+• *Setup*: Pure Flat-Bottom Momentum (No EMA Filter)
+• *Side-by-Side*: Left = 15M Raw Candles | Right = 15M Heikin-Ashi
 • *Entry Level*: `${entry_px:,.2f}`
 • *Stop Loss*: `${sl_px:,.2f}` (-1.20%)
 • *Take Profit*: `${tp_px:,.2f}` (*1:4.0 RR Target* / +4.80%)
@@ -173,7 +160,7 @@ body = []
 body.append(f'--{boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n{chat_id}\r\n'.encode('utf-8'))
 body.append(f'--{boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n{caption}\r\n'.encode('utf-8'))
 body.append(f'--{boundary}\r\nContent-Disposition: form-data; name="parse_mode"\r\n\r\nMarkdown\r\n'.encode('utf-8'))
-body.append(f'--{boundary}\r\nContent-Disposition: form-data; name="photo"; filename="side_by_side_chart.png"\r\nContent-Type: image/png\r\n\r\n'.encode('utf-8'))
+body.append(f'--{boundary}\r\nContent-Disposition: form-data; name="photo"; filename="side_by_side_15m.png"\r\nContent-Type: image/png\r\n\r\n'.encode('utf-8'))
 body.append(f_bytes)
 body.append(f'\r\n--{boundary}--\r\n'.encode('utf-8'))
 
@@ -183,4 +170,4 @@ req = urllib.request.Request(
     headers={'Content-Type': f'multipart/form-data; boundary={boundary}'}
 )
 res = json.load(urllib.request.urlopen(req, context=ssl_ctx, timeout=15))
-print('✅ Side-by-Side Photo Upload Result:', res.get('ok'))
+print('✅ 15-Minute Photo Upload Result:', res.get('ok'))

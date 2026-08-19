@@ -1,23 +1,20 @@
 #!/usr/bin/env python3
-"""scripts/stream_heikinashi_coindcx.py — Production Live Heikin-Ashi Momentum Execution Daemon for CoinDCX.
+"""scripts/stream_heikinashi_coindcx.py — Production Live Heikin-Ashi 15-Minute Momentum Execution Daemon for CoinDCX.
 
 Features:
-1. Strategy Rules:
-   - Heikin-Ashi Trend & Momentum:
-     * 🟢 Bullish Long: HA Green Candle + Flat Bottom (no lower wick) + Close > EMA(50) + Vol >= 2.5x
-     * 🔴 Bearish Short: HA Red Candle + Flat Top (no upper wick) + Close < EMA(50) + Vol >= 2.5x
-   - Color Transition: Only triggers on 1st or 2nd candle of new trend sequence.
+1. Strategy Rules (Pure Heikin-Ashi Momentum without EMA Filter):
+   - 🟢 Bullish Long: HA Green Candle + Flat Bottom (no lower wick) + Vol >= 2.5x
+   - 🔴 Bearish Short: HA Red Candle + Flat Top (no upper wick) + Vol >= 2.5x
+   - Color Transition: Triggers on 1st or 2nd candle of new sequence.
    - ATR Stop Loss Buffer: SL = max(Trigger Wick, 0.8 * ATR_14).
    - 1:4.0 Risk-to-Reward Target Native Bracket Orders.
 
 2. Execution Flow & Renders:
-   - Automated Dark-Mode Candlestick & Heikin-Ashi Chart Rendering on Entry & Exit.
+   - 15-Minute Candlestick evaluation cycle.
+   - Automated Dark-Mode Side-by-Side Chart Rendering (Left: 15M Raw Candles, Right: 15M Heikin-Ashi).
    - Broadcasts rendered charts and status updates to Telegram Group `-5535049486` via bot `8823560993:AAHAtlrSlbedbUJeIBgj2_NUe4-7BxB9Lx8`.
    - Binance Global Futures high-frequency volume & candle primary feed (CoinDCX fallback).
-   - Pre-arm sweep during T-15m to T.
-   - T-75s universe sweep lockout: Freezes universe and fast-polls armed candidates every 2s (<100ms).
-   - Native CoinDCX bracket orders with multi-account replication.
-   - Background Trailing Engine:
+   - Dynamic Trailing:
      * At +1.5R -> Moves SL to Entry (0.0R Break-Even).
      * At +2.5R -> Locks +1.0R profit.
      * At +4.0R -> Hard Take Profit Fill.
@@ -37,6 +34,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+import matplotlib.gridspec as gridspec
 
 # Load environment variables
 try:
@@ -64,10 +62,9 @@ logging.basicConfig(
 logger = logging.getLogger("HeikinAshiCoinDCX")
 
 # ── STRATEGY HYPERPARAMETERS ──────────────────────────────────────────────────
-TIMEFRAME = os.environ.get("HA_TIMEFRAME", "15m") # '15m', '30m', '1h'
+TIMEFRAME = os.environ.get("HA_TIMEFRAME", "15m") # '15m'
 VOL_SPIKE_MULT = float(os.environ.get("HA_VOL_MULT", "2.5"))
 MIN_NOTIONAL_24H = float(os.environ.get("HA_MIN_NOTIONAL", "200000.0")) # $200k liquidity floor
-EMA_PERIOD = int(os.environ.get("HA_EMA_PERIOD", "50"))
 ATR_PERIOD = int(os.environ.get("HA_ATR_PERIOD", "14"))
 RR_TARGET = float(os.environ.get("HA_RR_TARGET", "4.0")) # 1:4.0 RR
 MAX_CONCURRENT_POSITIONS = int(os.environ.get("HA_MAX_CONCURRENT", "4"))
@@ -111,7 +108,6 @@ def send_telegram_msg(text: str) -> Optional[int]:
 def send_telegram_photo(photo_path: str, caption: str) -> Optional[int]:
     """Uploads a rendered chart photo to Telegram group."""
     if not TELEGRAM_ENABLED or not os.path.exists(photo_path): return None
-    import mimetypes
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
     boundary = "----WebKitFormBoundary" + hex(int(time.time() * 1000))[2:]
     
@@ -119,21 +115,18 @@ def send_telegram_photo(photo_path: str, caption: str) -> Optional[int]:
         file_bytes = f.read()
         
     body = []
-    # Chat ID
-    body.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n{TELEGRAM_CHAT_ID}\r\n".encode("utf-8"))
-    # Caption
-    body.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"caption\"\r\n\r\n{caption}\r\n".encode("utf-8"))
-    body.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"parse_mode\"\r\n\r\nMarkdown\r\n".encode("utf-8"))
-    # Photo
-    body.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"chart.png\"\r\nContent-Type: image/png\r\n\r\n".encode("utf-8"))
+    body.append(f'--{boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n{TELEGRAM_CHAT_ID}\r\n'.encode('utf-8'))
+    body.append(f'--{boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n{caption}\r\n'.encode('utf-8'))
+    body.append(f'--{boundary}\r\nContent-Disposition: form-data; name="parse_mode"\r\n\r\nMarkdown\r\n'.encode('utf-8'))
+    body.append(f'--{boundary}\r\nContent-Disposition: form-data; name="photo"; filename="chart.png"\r\nContent-Type: image/png\r\n\r\n'.encode('utf-8'))
     body.append(file_bytes)
-    body.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
+    body.append(f'\r\n--{boundary}--\r\n'.encode('utf-8'))
     
     payload = b"".join(body)
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
     try:
         ctx = ssl._create_unverified_context()
-        res = json.load(urllib.request.urlopen(req, context=ctx, timeout=12))
+        res = json.load(urllib.request.urlopen(req, context=ctx, timeout=15))
         return res.get("result", {}).get("message_id")
     except Exception as e:
         logger.warning(f"Telegram photo upload failed: {e}")
@@ -152,8 +145,7 @@ def compute_heikin_ashi_bars(opens: np.ndarray, highs: np.ndarray, lows: np.ndar
     return ha_open, ha_high, ha_low, ha_close
 
 def render_heikin_ashi_chart(sym: str, klines: List[List[float]], signal: Dict[str, Any]) -> str:
-    """Renders a publication-grade side-by-side dark-mode chart (Left: Raw Candles, Right: Heikin-Ashi)."""
-    import matplotlib.gridspec as gridspec
+    """Renders a publication-grade side-by-side dark-mode chart (Left: 15M Raw Candles, Right: 15M Heikin-Ashi)."""
     os.makedirs("/tmp/charts", exist_ok=True)
     out_path = f"/tmp/charts/ha_{sym}_{int(time.time())}.png"
     
@@ -167,7 +159,6 @@ def render_heikin_ashi_chart(sym: str, klines: List[List[float]], signal: Dict[s
     vols = np.array([float(r[5]) for r in sub_klines])
     
     ha_open, ha_high, ha_low, ha_close = compute_heikin_ashi_bars(opens, highs, lows, closes)
-    ema50 = pd.Series(closes).ewm(span=EMA_PERIOD).mean().values
     
     entry_px = signal["entry_px"]
     sl_px = signal["sl_px"]
@@ -201,10 +192,9 @@ def render_heikin_ashi_chart(sym: str, klines: List[List[float]], signal: Dict[s
         rect_h = max(abs(c - o), 0.0001)
         ax_raw_p.add_patch(patches.Rectangle((x[i]-w/2, rect_y), w, rect_h, facecolor=col, edgecolor=col, alpha=0.85))
         
-    ax_raw_p.plot(x, ema50, color="#ffab00", linestyle="-", linewidth=1.7, label=f"EMA {EMA_PERIOD}")
     ax_raw_p.axhline(entry_px, color="#00e5ff", linestyle="--", linewidth=1.4, label=f"Entry: ${entry_px:.4f}")
     ax_raw_p.axhline(sl_px, color="#ff5252", linestyle="--", linewidth=1.4, label=f"Stop Loss: ${sl_px:.4f}")
-    ax_raw_p.axhline(tp_px, color="#00e676", linestyle="--", linewidth=1.6, label=f"TP (1:{RR_TARGET:.1f} RR): ${tp_px:.4f}")
+    ax_raw_p.axhline(tp_px, color="#00e676", linestyle="--", linewidth=1.6, label=f"Take Profit (1:{RR_TARGET:.1f} RR): ${tp_px:.4f}")
     
     if side == "buy":
         ax_raw_p.axhspan(entry_px, tp_px, xmin=0.70, xmax=1.0, color="#00e676", alpha=0.12)
@@ -240,10 +230,9 @@ def render_heikin_ashi_chart(sym: str, klines: List[List[float]], signal: Dict[s
         elif not is_ha_green and ((hh - ho) / max(hh - hl, 0.0001) <= 0.05):
             ax_ha_p.scatter(x[i], hh + (0.002 * ho), color="#ff1744", marker="v", s=40, zorder=5)
             
-    ax_ha_p.plot(x, ema50, color="#ffab00", linestyle="-", linewidth=1.7, label=f"EMA {EMA_PERIOD}")
     ax_ha_p.axhline(entry_px, color="#00e5ff", linestyle="--", linewidth=1.4, label=f"Entry: ${entry_px:.4f}")
     ax_ha_p.axhline(sl_px, color="#ff5252", linestyle="--", linewidth=1.4, label=f"Stop Loss: ${sl_px:.4f}")
-    ax_ha_p.axhline(tp_px, color="#00e676", linestyle="--", linewidth=1.6, label=f"TP (1:{RR_TARGET:.1f} RR): ${tp_px:.4f}")
+    ax_ha_p.axhline(tp_px, color="#00e676", linestyle="--", linewidth=1.6, label=f"Take Profit (1:{RR_TARGET:.1f} RR): ${tp_px:.4f}")
     
     if side == "buy":
         ax_ha_p.axhspan(entry_px, tp_px, xmin=0.70, xmax=1.0, color="#00e676", alpha=0.12)
@@ -269,7 +258,7 @@ def render_heikin_ashi_chart(sym: str, klines: List[List[float]], signal: Dict[s
         ax.set_xticklabels(date_labels[::5], rotation=12, fontsize=8.5, color="#90a4ae")
         
     fig_side = "LONG" if side == "buy" else "SHORT"
-    fig.suptitle(f"STRATEGY: HEIKIN-ASHI {TIMEFRAME.upper()} MOMENTUM • #{sym}/USDT {fig_side} (1:{RR_TARGET:.1f} RR)", fontsize=15, fontweight="bold", color="#ffffff", y=0.98)
+    fig.suptitle(f"STRATEGY: HEIKIN-ASHI 15-MINUTE MOMENTUM • #{sym}/USDT {fig_side} (1:{RR_TARGET:.1f} RR)", fontsize=15, fontweight="bold", color="#ffffff", y=0.98)
     
     plt.subplots_adjust(top=0.92, bottom=0.08, left=0.05, right=0.96)
     plt.savefig(out_path, dpi=160, facecolor=fig.get_facecolor(), edgecolor="none")
@@ -278,8 +267,8 @@ def render_heikin_ashi_chart(sym: str, klines: List[List[float]], signal: Dict[s
     return out_path
 
 def evaluate_heikin_ashi_signal(sym: str, klines: List[List[float]]) -> Optional[Dict[str, Any]]:
-    """Evaluates Heikin-Ashi momentum transition and returns signal parameters."""
-    if len(klines) < EMA_PERIOD + 10:
+    """Evaluates Heikin-Ashi momentum transition WITHOUT EMA filter."""
+    if len(klines) < 30:
         return None
         
     opens = np.array([float(r[1]) for r in klines])
@@ -291,10 +280,7 @@ def evaluate_heikin_ashi_signal(sym: str, klines: List[List[float]]) -> Optional
     n = len(closes)
     ci = n - 1
     
-    # 1. EMA 50
-    ema50 = pd.Series(closes).ewm(span=EMA_PERIOD).mean().values
-    
-    # 2. Volume SMA 20
+    # 1. Volume SMA 20
     vol_ma20 = pd.Series(volumes).rolling(20, min_periods=5).mean().values
     if vol_ma20[ci] <= 0:
         return None
@@ -303,14 +289,14 @@ def evaluate_heikin_ashi_signal(sym: str, klines: List[List[float]]) -> Optional
     if vol_mult < VOL_SPIKE_MULT:
         return None
         
-    # 3. ATR 14
+    # 2. ATR 14
     tr = np.zeros(n)
     tr[0] = highs[0] - lows[0]
     for k in range(1, n):
         tr[k] = max(highs[k] - lows[k], abs(highs[k] - closes[k-1]), abs(lows[k] - closes[k-1]))
     atr14 = float(np.mean(tr[max(0, ci-13) : ci+1]))
     
-    # 4. Heikin Ashi
+    # 3. Heikin Ashi Calculation
     ha_open, ha_high, ha_low, ha_close = compute_heikin_ashi_bars(opens, highs, lows, closes)
     
     is_green = ha_close[ci] > ha_open[ci]
@@ -328,8 +314,9 @@ def evaluate_heikin_ashi_signal(sym: str, klines: List[List[float]]) -> Optional
     if ha_range <= 0:
         return None
         
-    flat_bottom = is_green and (1 <= consec_green <= 2) and (closes[ci] > ema50[ci]) and ((ha_open[ci] - ha_low[ci]) / ha_range <= 0.05)
-    flat_top = is_red and (1 <= consec_red <= 2) and (closes[ci] < ema50[ci]) and ((ha_high[ci] - ha_open[ci]) / ha_range <= 0.05)
+    # Flat Wick Check (No EMA filter — Pure Heikin-Ashi Momentum)
+    flat_bottom = is_green and (1 <= consec_green <= 2) and ((ha_open[ci] - ha_low[ci]) / ha_range <= 0.05)
+    flat_top = is_red and (1 <= consec_red <= 2) and ((ha_high[ci] - ha_open[ci]) / ha_range <= 0.05)
     
     entry_px = closes[ci]
     
@@ -447,14 +434,15 @@ def execute_live_entry(signal: Dict[str, Any], klines: List[List[float]]):
         try:
             chart_file = render_heikin_ashi_chart(sym, klines, signal)
             caption = (
-                f"💎 *STRATEGY: HEIKIN-ASHI 1H MOMENTUM*\n\n"
+                f"💎 *STRATEGY: HEIKIN-ASHI 15-MINUTE MOMENTUM*\n\n"
                 f"• *Status*: `NEW ORDER EXECUTED`\n"
                 f"• *Pair*: `#{sym}/USDT`\n"
+                f"• *Timeframe*: `15-Minute Candlesticks`\n"
                 f"• *Side*: `{side.upper()}`\n"
                 f"• *Setup*: `{signal['type']}` (Streak: {signal['streak']})\n"
                 f"• *Entry Price*: `${entry_px:.4f}`\n"
                 f"• *Stop Loss*: `${sl_px:.4f}` ($-{((abs(entry_px-sl_px))/entry_px)*100:.2f}\\%$)\n"
-                f"• *Take Profit*: `${tp_px:.4f}` (*1:{RR_TARGET:.1f} RR* / $+{((abs(tp_px-entry_px))/entry_px)*100:.2f}\\%$)\n"
+                f"• *Take Profit*: `${tp_px:.4f}` (*1:{RR_TARGET:.1f} RR Target* / $+{((abs(tp_px-entry_px))/entry_px)*100:.2f}\\%$)\n"
                 f"• *Volume Surge*: `{signal['vol_mult']:.1f}x`\n"
                 f"• *Trailing Rules*: BE at +1.5R, Lock Profit at +2.5R"
             )
@@ -484,9 +472,10 @@ def update_trailing_be():
             logger.info(f"🛡️ [BREAK-EVEN REACHED] #{sym} reached +{r_gain:.2f}R! Moving Stop Loss to Break-Even (${new_sl:.4f})...")
             trade["be_done"] = True
             send_telegram_msg(
-                f"🛡️ *STRATEGY: HEIKIN-ASHI 1H MOMENTUM*\n\n"
+                f"🛡️ *STRATEGY: HEIKIN-ASHI 15-MINUTE MOMENTUM*\n\n"
                 f"• *Status*: `BREAK-EVEN ACTIVATED` (+1.5R Reached)\n"
                 f"• *Pair*: `#{sym}/USDT`\n"
+                f"• *Timeframe*: `15-Minute Candlesticks`\n"
                 f"• *Side*: `{side.upper()}`\n"
                 f"• *Stop Loss*: Moved to Entry (${entry:.4f})\n"
                 f"• *Current Gain*: `+{r_gain:.2f}R`"
@@ -498,9 +487,10 @@ def update_trailing_be():
             logger.info(f"🔒 [LOCK PROFIT REACHED] #{sym} reached +{r_gain:.2f}R! Locking +1.0R Profit at ${new_sl:.4f}...")
             trade["lock_done"] = True
             send_telegram_msg(
-                f"🔒 *STRATEGY: HEIKIN-ASHI 1H MOMENTUM*\n\n"
+                f"🔒 *STRATEGY: HEIKIN-ASHI 15-MINUTE MOMENTUM*\n\n"
                 f"• *Status*: `PROFIT LOCKED (+1.0R)` (+2.5R Reached)\n"
                 f"• *Pair*: `#{sym}/USDT`\n"
+                f"• *Timeframe*: `15-Minute Candlesticks`\n"
                 f"• *Side*: `{side.upper()}`\n"
                 f"• *Stop Loss*: Locked at +1.0R (${new_sl:.4f})\n"
                 f"• *Current Gain*: `+{r_gain:.2f}R`"
@@ -508,8 +498,9 @@ def update_trailing_be():
 
 def main():
     logger.info("=========================================================================================")
-    logger.info("💎 HEIKIN-ASHI COINDCX LIVE TRADING DAEMON INITIALIZED 💎")
-    logger.info(f"  • Timeframe              : {TIMEFRAME.upper()}")
+    logger.info("💎 HEIKIN-ASHI 15-MINUTE COINDCX LIVE TRADING DAEMON INITIALIZED 💎")
+    logger.info(f"  • Timeframe              : {TIMEFRAME.upper()} (15-Minute Candles)")
+    logger.info(f"  • Filter Mode            : Pure Heikin-Ashi Momentum (No EMA Filter)")
     logger.info(f"  • Volume Surge Trigger   : {VOL_SPIKE_MULT}x 20MA")
     logger.info(f"  • Risk:Reward Target     : 1:{RR_TARGET} RR Native Bracket")
     logger.info(f"  • Max Concurrent Trades  : {MAX_CONCURRENT_POSITIONS}")
@@ -525,15 +516,16 @@ def main():
     
     # Send daemon startup alert to Telegram group
     send_telegram_msg(
-        f"🤖 *STRATEGY: HEIKIN-ASHI 1H MOMENTUM LIVE*\n\n"
+        f"🤖 *STRATEGY: HEIKIN-ASHI 15-MINUTE MOMENTUM LIVE*\n\n"
         f"• *Daemon Status*: `ACTIVE SCANNING`\n"
-        f"• *Timeframe*: `1H Candlesticks`\n"
+        f"• *Timeframe*: `15-Minute Candlesticks`\n"
+        f"• *Filter*: `Pure Momentum (No EMA Filter)`\n"
         f"• *Risk:Reward Target*: `1:4.0 RR Native Bracket`\n"
         f"• *Active Universe*: `496 Pairs`\n"
         f"• *Render Channel*: `{TELEGRAM_CHAT_ID}`"
     )
     
-    tf_secs = 3600 if TIMEFRAME == "1h" else (1800 if TIMEFRAME == "30m" else 900)
+    tf_secs = 900 # 15 minutes = 900 seconds
     
     while True:
         try:
@@ -544,11 +536,11 @@ def main():
             # Step 1: Trailing & Break-Even background maintenance
             update_trailing_be()
             
-            # Step 2: Pre-Arm Scan (Active between T-15m and T-75s)
-            if sec_to_close <= 900 and sec_to_close > 75:
+            # Step 2: Pre-Arm Scan (Active between T-5m and T-45s)
+            if sec_to_close <= 300 and sec_to_close > 45:
                 armed_count = 0
                 for sym in universe:
-                    klines = A.get_ohlcv(sym, interval=TIMEFRAME, limit=60, include_forming=True)
+                    klines = A.get_ohlcv(sym, interval=TIMEFRAME, limit=40, include_forming=True)
                     if not klines: continue
                     sig = evaluate_heikin_ashi_signal(sym, klines)
                     if sig:
@@ -556,15 +548,15 @@ def main():
                         ARMED_CANDIDATES[sym] = sig
                         armed_count += 1
                         logger.info(f"⚡ [PRE-ARM DETECTED] #{sym} -> {sig['type']} | Vol: {sig['vol_mult']:.1f}x (T-{sec_to_close//60:02d}m{sec_to_close%60:02d}s)")
-                time.sleep(15)
+                time.sleep(10)
                 continue
                 
-            # Step 3: Fast-Poll Lockout (T-75s to T-0s)
-            elif sec_to_close <= 75 and sec_to_close > 0:
+            # Step 3: Fast-Poll Lockout (T-45s to T-0s)
+            elif sec_to_close <= 45 and sec_to_close > 0:
                 if ARMED_CANDIDATES:
                     logger.info(f"🎯 [FAST-POLL LOCKOUT] Polling {len(ARMED_CANDIDATES)} armed candidates every 2s (T-{sec_to_close}s)...")
                     for sym in list(ARMED_CANDIDATES.keys()):
-                        klines = A.get_ohlcv(sym, interval=TIMEFRAME, limit=60, include_forming=True)
+                        klines = A.get_ohlcv(sym, interval=TIMEFRAME, limit=40, include_forming=True)
                         sig = evaluate_heikin_ashi_signal(sym, klines)
                         if sig:
                             sig["klines"] = klines
@@ -573,7 +565,7 @@ def main():
                             ARMED_CANDIDATES.pop(sym, None)
                     time.sleep(2)
                 else:
-                    time.sleep(10)
+                    time.sleep(5)
                 continue
                 
             # Step 4: Candle Close Trigger (T=00s)
@@ -581,21 +573,21 @@ def main():
                 bucket_id = int(now // tf_secs) * tf_secs
                 if bucket_id not in PROCESSED_BUCKETS:
                     PROCESSED_BUCKETS.add(bucket_id)
-                    logger.info(f"⚡ [{TIMEFRAME.upper()} CANDLE CLOSE TRIGGERED] Evaluating execution for bucket {bucket_id}...")
+                    logger.info(f"⚡ [15-MINUTE CANDLE CLOSE TRIGGERED] Evaluating execution for bucket {bucket_id}...")
                     
                     if ARMED_CANDIDATES:
                         for sym, sig in list(ARMED_CANDIDATES.items()):
-                            kl = sig.get("klines") or A.get_ohlcv(sym, interval=TIMEFRAME, limit=60, include_forming=False)
+                            kl = sig.get("klines") or A.get_ohlcv(sym, interval=TIMEFRAME, limit=40, include_forming=False)
                             execute_live_entry(sig, kl)
                         ARMED_CANDIDATES.clear()
                     else:
-                        logger.info("ℹ️ No pre-armed Heikin-Ashi candidates at candle close.")
+                        logger.info("ℹ️ No pre-armed Heikin-Ashi candidates at 15m candle close.")
                         
-            time.sleep(10)
+            time.sleep(5)
             
         except Exception as e:
             logger.error(f"Error in main daemon loop: {e}", exc_info=True)
-            time.sleep(10)
+            time.sleep(5)
 
 if __name__ == "__main__":
     main()

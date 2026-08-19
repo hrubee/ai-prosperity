@@ -149,8 +149,8 @@ if A2:
     log(f"[MultiAccount] Secondary CoinDCX Account Enabled (Key ending in ...{KEY_2[-6:]})")
 
 # ── Telegram Alerter Integration ──────────────────────────────────────────────
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8823560993:AAHAtlrSlbedbUJeIBgj2_NUe4-7BxB9Lx8").strip()
-TELEGRAM_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "-5535049486").strip()
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8683548180:AAFwxp682aMZHh-_BHZksBUfEhEoEfvTeyk").strip()
+TELEGRAM_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "7871236037,7749862496").strip()
 TELEGRAM_ENABLED = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT)
 
 def send_telegram_alert(text: str, reply_to_msg_id: int = None):
