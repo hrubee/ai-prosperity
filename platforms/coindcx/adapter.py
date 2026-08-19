@@ -111,40 +111,22 @@ class CoinDCXExchangeAdapter:
     def get_ohlcv(self, base: str, interval: str = "4h", limit: int = 210, include_forming: bool = False) -> list:
         """Return [[ts_ms,o,h,l,c,v], ...] ascending. For 4h, fetch 1h from CoinDCX and aggregate
         4-into-1 on UTC-aligned buckets (00/04/08/12/16/20). If include_forming=False, only closed bars are returned."""
-        if interval in ("1h", "1m", "15m", "1d"):
-            need = limit
-            rows = self._candles_1h(base, limit=need) if interval == "1h" else self._raw(base, interval, need)
-            return [[r["time"], float(r["open"]), float(r["high"]), float(r["low"]),
-                     float(r["close"]), float(r.get("volume", 0))] for r in rows][-limit:]
-        if interval not in ("4h", "30m"):
-            raise CoinDCXError("unsupported interval %s" % interval)
-        rows = self._candles_1h(base, limit=min(1000, (limit + 2) * 4)) if interval == "4h" else self._raw(base, "15m", min(1000, (limit + 2) * 2))
-        if len(rows) < 8:
-            return []
-        buckets: dict = {}
-        order: list = []
-        for r in rows:
-            bucket_size = (4 * 3600 * 1000) if interval == "4h" else (1800 * 1000)
-            b = (r["time"] // bucket_size) * bucket_size
-            if b not in buckets:
-                buckets[b] = {"t": b, "o": float(r["open"]), "h": float(r["high"]),
-                              "l": float(r["low"]), "c": float(r["close"]), "v": float(r.get("volume", 0))}
-                order.append(b)
-            else:
-                agg = buckets[b]
-                agg["h"] = max(agg["h"], float(r["high"]))
-                agg["l"] = min(agg["l"], float(r["low"]))
-                agg["c"] = float(r["close"])
-                agg["v"] += float(r.get("volume", 0))
-        out = [[buckets[b]["t"], buckets[b]["o"], buckets[b]["h"], buckets[b]["l"],
-                buckets[b]["c"], buckets[b]["v"]] for b in order]
-        # drop the still-forming last bucket if include_forming is False
-        if not include_forming:
-            now_ms = int(time.time() * 1000)
-            bucket_size = (4 * 3600 * 1000) if interval == "4h" else (1800 * 1000)
-            if out and (now_ms - out[-1][0]) < bucket_size:
-                out = out[:-1]
-        return out[-limit:]
+        if interval in ("1h", "1m", "15m", "1d", "30m", "4h"):
+            need = limit + (1 if not include_forming else 0)
+            rows = self._raw(base, interval, need)
+            if not rows and interval == "1h":
+                rows = self._candles_1h(base, limit=need)
+            if not rows:
+                return []
+            out = [[r["time"], float(r["open"]), float(r["high"]), float(r["low"]),
+                     float(r["close"]), float(r.get("volume", 0))] for r in rows]
+            if not include_forming:
+                now_ms = int(time.time() * 1000)
+                int_sec = {"1m": 60, "15m": 900, "30m": 1800, "1h": 3600, "4h": 14400, "1d": 86400}.get(interval, 3600)
+                bucket_size = int_sec * 1000
+                if out and (now_ms - out[-1][0]) < bucket_size:
+                    out = out[:-1]
+            return out[-limit:]
 
     def _raw(self, base: str, interval: str, limit: int) -> list:
         """Fetch 100% Perpetual Futures OHLCV candle data (Binance Futures API primary)."""

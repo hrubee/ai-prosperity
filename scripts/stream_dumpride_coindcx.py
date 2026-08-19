@@ -31,8 +31,8 @@ TF = os.environ.get("DUMPRIDE_TF", "4h")
 TF_SEC = {"15m": 900, "30m": 1800, "1h": 3600, "2h": 7200, "4h": 14400, "8h": 28800, "12h": 43200}.get(TF, 14400)
 TF_MS = TF_SEC * 1000
 
-SPIKE_VOL_MULT = float(os.environ.get("DUMPRIDE_SPIKE_VOL", "10.0"))
-MIN_PUMP_PCT = float(os.environ.get("DUMPRIDE_MIN_PUMP_PCT", "1.0"))
+SPIKE_VOL_MULT = float(os.environ.get("DUMPRIDE_SPIKE_VOL", "5.0")) # 5.0x Global Volume Surge
+MIN_PUMP_PCT = float(os.environ.get("DUMPRIDE_MIN_PUMP_PCT", "3.0")) # Min +3.0% 1H price pump
 ATR_PERIOD = int(os.environ.get("DUMPRIDE_ATR_PERIOD", "14"))
 SL_ATR_MULT = float(os.environ.get("DUMPRIDE_SL_ATR_MULT", "1.0"))
 RR_TARGET = float(os.environ.get("DUMPRIDE_RR_TARGET", "2.0"))
@@ -44,7 +44,8 @@ RISK_FRAC = float(os.environ.get("DUMPRIDE_RISK_FRAC", "0.002")) # 0.2% risk per
 DEFAULT_LEVERAGE = int(os.environ.get("DUMPRIDE_LEVERAGE", "10"))
 MAX_CONCURRENT = int(os.environ.get("DUMPRIDE_MAX_CONCURRENT", "10"))
 MIN_RISK_SPREAD_PCT = float(os.environ.get("DUMPRIDE_MIN_RISK_PCT", "0.008")) # 0.8% min distance
-MIN_4H_NOTIONAL_VOL = float(os.environ.get("DUMPRIDE_MIN_VOL_USDT", "25000.0" if TF == "1h" else "100000.0")) # Min volume threshold
+MIN_4H_NOTIONAL_VOL = float(os.environ.get("DUMPRIDE_MIN_VOL_USDT", "250000.0")) # Min $250k candle volume
+MIN_BASELINE_VOL_USDT = float(os.environ.get("DUMPRIDE_MIN_BASE_VOL_USDT", "35000.0")) # Min $35k/hr baseline
 MIN_REQUIRED_LEVERAGE = int(os.environ.get("DUMPRIDE_MIN_LEVERAGE", "10")) # Must support >=10x leverage
 
 ARMED = os.environ.get("LIVE_ARMED", "0") == "1"
@@ -359,12 +360,17 @@ def evaluate_coin_4h_signal(base, adapter=None, include_forming=False):
         # 20-period baseline volume (using preceding 20 closed bars)
         base_v = float(np.mean(vols[max(0, ci - 20) : ci]))
         if base_v <= 0: return None
-        vol_mult = vols[ci] / base_v
         
+        # Check baseline liquidity ($35k/hr min to eliminate dead coins)
+        base_notional_usdt = float(base_v * closes[ci])
+        if base_notional_usdt < MIN_BASELINE_VOL_USDT:
+            return None
+            
+        vol_mult = vols[ci] / base_v
         if vol_mult < SPIKE_VOL_MULT:
             return None
 
-        # 4H Notional Volume Filter ($100k min to prevent illiquid micro-cap phantom spikes)
+        # Candle Notional Volume Filter ($250k min to guarantee true global market climax)
         notional_vol_usdt = float(vols[ci] * closes[ci])
         if notional_vol_usdt < MIN_4H_NOTIONAL_VOL:
             return None
