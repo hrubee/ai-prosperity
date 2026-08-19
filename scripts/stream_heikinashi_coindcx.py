@@ -68,7 +68,7 @@ MIN_NOTIONAL_24H = float(os.environ.get("HA_MIN_NOTIONAL", "200000.0")) # $200k 
 ATR_PERIOD = int(os.environ.get("HA_ATR_PERIOD", "14"))
 RR_TARGET = float(os.environ.get("HA_RR_TARGET", "4.0")) # 1:4.0 RR
 MAX_CONCURRENT_POSITIONS = int(os.environ.get("HA_MAX_CONCURRENT", "4"))
-RISK_PCT_PER_TRADE = float(os.environ.get("HA_RISK_PCT", "0.0020")) # 0.20% wallet risk
+RISK_PCT_PER_TRADE = float(os.environ.get("HA_RISK_PCT", "0.0010")) # 0.10% wallet risk
 
 # ── TELEGRAM CONFIGURATION ────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8823560993:AAHAtlrSlbedbUJeIBgj2_NUe4-7BxB9Lx8").strip()
