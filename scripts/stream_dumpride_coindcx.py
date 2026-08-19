@@ -31,8 +31,10 @@ TF = os.environ.get("DUMPRIDE_TF", "4h")
 TF_SEC = {"15m": 900, "30m": 1800, "1h": 3600, "2h": 7200, "4h": 14400, "8h": 28800, "12h": 43200}.get(TF, 14400)
 TF_MS = TF_SEC * 1000
 
-SPIKE_VOL_MULT = float(os.environ.get("DUMPRIDE_SPIKE_VOL", "5.0")) # 5.0x Global Volume Surge
-MIN_PUMP_PCT = float(os.environ.get("DUMPRIDE_MIN_PUMP_PCT", "3.0")) # Min +3.0% 1H price pump
+SPIKE_VOL_MULT = float(os.environ.get("DUMPRIDE_SPIKE_VOL", "3.5")) # 3.5x Global Volume Surge
+MIN_PUMP_PCT = float(os.environ.get("DUMPRIDE_MIN_PUMP_PCT", "0.0")) # Green body
+MAX_PUMP_PCT = float(os.environ.get("DUMPRIDE_MAX_PUMP_PCT", "2.5")) # Cap at +2.5% to avoid chasing breakouts
+MIN_UPPER_WICK_RATIO = float(os.environ.get("DUMPRIDE_MIN_WICK_RATIO", "0.20")) # Min 20% upper rejection wick (Whale Absorption)
 ATR_PERIOD = int(os.environ.get("DUMPRIDE_ATR_PERIOD", "14"))
 SL_ATR_MULT = float(os.environ.get("DUMPRIDE_SL_ATR_MULT", "1.0"))
 RR_TARGET = float(os.environ.get("DUMPRIDE_RR_TARGET", "2.0"))
@@ -44,7 +46,7 @@ RISK_FRAC = float(os.environ.get("DUMPRIDE_RISK_FRAC", "0.002")) # 0.2% risk per
 DEFAULT_LEVERAGE = int(os.environ.get("DUMPRIDE_LEVERAGE", "10"))
 MAX_CONCURRENT = int(os.environ.get("DUMPRIDE_MAX_CONCURRENT", "10"))
 MIN_RISK_SPREAD_PCT = float(os.environ.get("DUMPRIDE_MIN_RISK_PCT", "0.008")) # 0.8% min distance
-MIN_4H_NOTIONAL_VOL = float(os.environ.get("DUMPRIDE_MIN_VOL_USDT", "250000.0")) # Min $250k candle volume
+MIN_4H_NOTIONAL_VOL = float(os.environ.get("DUMPRIDE_MIN_VOL_USDT", "200000.0")) # Min $200k candle volume
 MIN_BASELINE_VOL_USDT = float(os.environ.get("DUMPRIDE_MIN_BASE_VOL_USDT", "35000.0")) # Min $35k/hr baseline
 MIN_REQUIRED_LEVERAGE = int(os.environ.get("DUMPRIDE_MIN_LEVERAGE", "10")) # Must support >=10x leverage
 
@@ -354,7 +356,15 @@ def evaluate_coin_4h_signal(base, adapter=None, include_forming=False):
             return None
             
         pump_pct = ((closes[ci] - opens[ci]) / opens[ci]) * 100.0
-        if pump_pct < MIN_PUMP_PCT:
+        if pump_pct < MIN_PUMP_PCT or pump_pct > MAX_PUMP_PCT:
+            return None
+            
+        # Upper Wick Rejection Filter (Whale Absorption of Buyers)
+        c_range = highs[ci] - lows[ci]
+        if c_range <= 0: return None
+        upper_wick = highs[ci] - max(opens[ci], closes[ci])
+        wick_ratio = upper_wick / c_range
+        if wick_ratio < MIN_UPPER_WICK_RATIO:
             return None
             
         # 20-period baseline volume (using preceding 20 closed bars)
@@ -403,6 +413,7 @@ def evaluate_coin_4h_signal(base, adapter=None, include_forming=False):
             "atr": atr14,
             "vol_mult": vol_mult,
             "pump_pct": pump_pct,
+            "wick_ratio": wick_ratio,
             "is_forming": include_forming
         }
     except Exception:
@@ -718,7 +729,7 @@ def run_dumpride_engine():
                 if armed_watchlist:
                     log(f"🎯 [PRE-ARM WATCHLIST] {len(armed_watchlist)} candidates armed for upcoming {TF.upper()} close (T-{mins_to_close:02d}m {secs_rem:02d}s):")
                     for sym, sig in armed_watchlist.items():
-                        log(f"   -> #{sym}: Forming Spike {sig['vol_mult']:.1f}x | Pump +{sig['pump_pct']:.1f}% | Pre-calc SL: {sig['sl_px']:.6g} | TP: {sig['tp_px']:.6g}")
+                        log(f"   -> #{sym}: Spike {sig['vol_mult']:.1f}x | Pump +{sig['pump_pct']:.1f}% | Upper Wick {sig.get('wick_ratio',0)*100:.0f}% | Pre-calc SL: {sig['sl_px']:.6g} | TP: {sig['tp_px']:.6g}")
                 else:
                     log(f"🔍 [PRE-ARM SCAN] Universe swept ({len(universe)} coins). 0 volume spikes detected (T-{mins_to_close:02d}m {secs_rem:02d}s to {TF.upper()} close).")
                     
@@ -729,7 +740,7 @@ def run_dumpride_engine():
                         updated_sig = evaluate_coin_4h_signal(sym, A, include_forming=True)
                         if updated_sig and updated_sig["vol_mult"] >= (SPIKE_VOL_MULT * 0.85):
                             armed_watchlist[sym] = updated_sig
-                            log(f"🔒 [FINAL COUNTDOWN T-{secs_rem:02d}s] #{sym} ARMED: Vol Spike {updated_sig['vol_mult']:.1f}x | Pump +{updated_sig['pump_pct']:.1f}% | Pre-calc SL: {updated_sig['sl_px']:.6g} | TP: {updated_sig['tp_px']:.6g}")
+                            log(f"🔒 [FINAL COUNTDOWN T-{secs_rem:02d}s] #{sym} ARMED: Spike {updated_sig['vol_mult']:.1f}x | Pump +{updated_sig['pump_pct']:.1f}% | Upper Wick {updated_sig.get('wick_ratio',0)*100:.0f}% | Pre-calc SL: {updated_sig['sl_px']:.6g} | TP: {updated_sig['tp_px']:.6g}")
                     except Exception:
                         pass
                 time.sleep(2)
