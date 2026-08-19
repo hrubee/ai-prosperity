@@ -297,11 +297,13 @@ class CoinDCXExchangeAdapter:
         inst = self.instrument(base)
         maxlev = float(inst.get("max_leverage_short" if not is_buy else "max_leverage_long") or leverage)
         lev = int(min(int(leverage), int(maxlev))) or 1
-        # Ensure SL is strictly lower than current mark price for long orders
-        if is_buy:
-            ltp = float(inst.get("last_price") or inst.get("mark_price") or 0)
-            if ltp > 0 and sl_price >= ltp:
+        # Ensure SL is strictly lower than LTP for long orders, and higher than LTP for short orders
+        ltp = float(inst.get("last_price") or inst.get("mark_price") or 0)
+        if ltp > 0:
+            if is_buy and sl_price >= ltp:
                 sl_price = ltp * 0.995
+            elif not is_buy and sl_price <= ltp:
+                sl_price = ltp * 1.005
 
         order = {
             "side": "buy" if is_buy else "sell",
