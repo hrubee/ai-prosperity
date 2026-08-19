@@ -64,7 +64,7 @@ logging.basicConfig(
 logger = logging.getLogger("HeikinAshiCoinDCX")
 
 # ── STRATEGY HYPERPARAMETERS ──────────────────────────────────────────────────
-TIMEFRAME = os.environ.get("HA_TIMEFRAME", "1h") # '1h', '30m', '15m'
+TIMEFRAME = os.environ.get("HA_TIMEFRAME", "15m") # '15m', '30m', '1h'
 VOL_SPIKE_MULT = float(os.environ.get("HA_VOL_MULT", "2.5"))
 MIN_NOTIONAL_24H = float(os.environ.get("HA_MIN_NOTIONAL", "200000.0")) # $200k liquidity floor
 EMA_PERIOD = int(os.environ.get("HA_EMA_PERIOD", "50"))
@@ -152,11 +152,12 @@ def compute_heikin_ashi_bars(opens: np.ndarray, highs: np.ndarray, lows: np.ndar
     return ha_open, ha_high, ha_low, ha_close
 
 def render_heikin_ashi_chart(sym: str, klines: List[List[float]], signal: Dict[str, Any]) -> str:
-    """Renders a publication-grade dark-mode chart of the trade entry."""
+    """Renders a publication-grade side-by-side dark-mode chart (Left: Raw Candles, Right: Heikin-Ashi)."""
+    import matplotlib.gridspec as gridspec
     os.makedirs("/tmp/charts", exist_ok=True)
     out_path = f"/tmp/charts/ha_{sym}_{int(time.time())}.png"
     
-    n_display = 35
+    n_display = 36
     sub_klines = klines[-n_display:]
     times = [r[0] for r in sub_klines]
     opens = np.array([float(r[1]) for r in sub_klines])
@@ -168,63 +169,110 @@ def render_heikin_ashi_chart(sym: str, klines: List[List[float]], signal: Dict[s
     ha_open, ha_high, ha_low, ha_close = compute_heikin_ashi_bars(opens, highs, lows, closes)
     ema50 = pd.Series(closes).ewm(span=EMA_PERIOD).mean().values
     
-    plt.style.use("dark_background")
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(13, 8), dpi=150, gridspec_kw={"height_ratios": [3.0, 1.0]})
-    fig.patch.set_facecolor("#0d1117")
-    ax1.set_facecolor("#161b22")
-    ax2.set_facecolor("#161b22")
-    
-    x = np.arange(len(sub_klines))
-    w = 0.65
-    
-    # 1. Plot Candlesticks
-    for i in range(len(sub_klines)):
-        o, h, l, c = opens[i], highs[i], lows[i], closes[i]
-        col = "#26a69a" if c >= o else "#ef5350"
-        ax1.plot([x[i], x[i]], [l, h], color=col, linewidth=1.2)
-        rect_y = min(o, c)
-        rect_h = max(abs(c - o), 0.0001)
-        ax1.add_patch(patches.Rectangle((x[i]-w/2, rect_y), w, rect_h, facecolor=col, edgecolor=col, alpha=0.9))
-        
-    # Plot EMA 50
-    ax1.plot(x, ema50, color="#f59e0b", linestyle="-", linewidth=1.5, label=f"EMA {EMA_PERIOD}")
-    
-    # Plot Trade Levels
     entry_px = signal["entry_px"]
     sl_px = signal["sl_px"]
     tp_px = signal["tp_px"]
     side = signal["side"]
     
-    ax1.axhline(entry_px, color="#00d8ff", linestyle="--", linewidth=1.4, label=f"Entry: ${entry_px:.4f}")
-    ax1.axhline(sl_px, color="#ff4d6d", linestyle="--", linewidth=1.4, label=f"Stop Loss: ${sl_px:.4f}")
-    ax1.axhline(tp_px, color="#00f097", linestyle="--", linewidth=1.4, label=f"Take Profit (1:{RR_TARGET:.1f} RR): ${tp_px:.4f}")
+    plt.style.use("dark_background")
+    fig = plt.figure(figsize=(22, 10), dpi=160)
+    fig.patch.set_facecolor("#0a0d13")
     
-    # Zone fill
-    if side == "buy":
-        ax1.axhspan(entry_px, tp_px, xmin=0.75, xmax=1.0, color="#00f097", alpha=0.12)
-        ax1.axhspan(sl_px, entry_px, xmin=0.75, xmax=1.0, color="#ff4d6d", alpha=0.12)
-    else:
-        ax1.axhspan(tp_px, entry_px, xmin=0.75, xmax=1.0, color="#00f097", alpha=0.12)
-        ax1.axhspan(entry_px, sl_px, xmin=0.75, xmax=1.0, color="#ff4d6d", alpha=0.12)
+    gs = gridspec.GridSpec(2, 2, height_ratios=[3.5, 1.0], width_ratios=[1.0, 1.0], hspace=0.08, wspace=0.10)
+    
+    ax_raw_p = fig.add_subplot(gs[0, 0])
+    ax_raw_v = fig.add_subplot(gs[1, 0], sharex=ax_raw_p)
+    ax_ha_p  = fig.add_subplot(gs[0, 1])
+    ax_ha_v  = fig.add_subplot(gs[1, 1], sharex=ax_ha_p)
+    
+    for ax in [ax_raw_p, ax_raw_v, ax_ha_p, ax_ha_v]:
+        ax.set_facecolor("#10141d")
+        ax.grid(True, linestyle=":", alpha=0.22, color="#2c3848")
         
-    title_side = "🟢 LONG" if side == "buy" else "🔴 SHORT"
-    ax1.set_title(f"Heikin-Ashi 1H Momentum — #{sym}/USDT {title_side} (1:{RR_TARGET:.1f} RR)", fontsize=13, fontweight="bold", color="#ffffff", pad=10)
-    ax1.set_ylabel("Price (USDT)", fontsize=10, color="#8b949e")
-    ax1.grid(True, linestyle=":", alpha=0.25, color="#30363d")
-    ax1.legend(loc="upper left", facecolor="#1f2430", edgecolor="#30363d", fontsize=8.5)
+    x = np.arange(len(sub_klines))
+    w = 0.62
     
-    # 2. Volume Sub-Plot
-    vol_cols = ["#26a69a" if closes[i] >= opens[i] else "#ef5350" for i in range(len(sub_klines))]
-    ax2.bar(x, vols, width=w, color=vol_cols, alpha=0.85)
-    ax2.set_ylabel("Volume", fontsize=10, color="#8b949e")
-    ax2.grid(True, linestyle=":", alpha=0.25, color="#30363d")
+    # ── 1. LEFT PANEL: RAW CANDLESTICKS ──
+    for i in range(len(sub_klines)):
+        o, h, l, c = opens[i], highs[i], lows[i], closes[i]
+        col = "#00e676" if c >= o else "#ff1744"
+        ax_raw_p.plot([x[i], x[i]], [l, h], color=col, linewidth=1.2, alpha=0.85)
+        rect_y = min(o, c)
+        rect_h = max(abs(c - o), 0.0001)
+        ax_raw_p.add_patch(patches.Rectangle((x[i]-w/2, rect_y), w, rect_h, facecolor=col, edgecolor=col, alpha=0.85))
+        
+    ax_raw_p.plot(x, ema50, color="#ffab00", linestyle="-", linewidth=1.7, label=f"EMA {EMA_PERIOD}")
+    ax_raw_p.axhline(entry_px, color="#00e5ff", linestyle="--", linewidth=1.4, label=f"Entry: ${entry_px:.4f}")
+    ax_raw_p.axhline(sl_px, color="#ff5252", linestyle="--", linewidth=1.4, label=f"Stop Loss: ${sl_px:.4f}")
+    ax_raw_p.axhline(tp_px, color="#00e676", linestyle="--", linewidth=1.6, label=f"TP (1:{RR_TARGET:.1f} RR): ${tp_px:.4f}")
     
-    date_labels = [time.strftime("%m-%d %H:%M", time.gmtime(t/1000)) for t in times]
-    ax2.set_xticks(x[::4])
-    ax2.set_xticklabels(date_labels[::4], rotation=15, fontsize=8, color="#8b949e")
+    if side == "buy":
+        ax_raw_p.axhspan(entry_px, tp_px, xmin=0.70, xmax=1.0, color="#00e676", alpha=0.12)
+        ax_raw_p.axhspan(sl_px, entry_px, xmin=0.70, xmax=1.0, color="#ff1744", alpha=0.12)
+    else:
+        ax_raw_p.axhspan(tp_px, entry_px, xmin=0.70, xmax=1.0, color="#00e676", alpha=0.12)
+        ax_raw_p.axhspan(entry_px, sl_px, xmin=0.70, xmax=1.0, color="#ff1744", alpha=0.12)
+        
+    ax_raw_p.set_title(f"RAW CANDLESTICKS ({TIMEFRAME.upper()}) — PRICE ACTION & S/R", fontsize=12, fontweight="bold", color="#e2e8f0", pad=10, loc="left")
+    ax_raw_p.set_ylabel("Price (USDT)", fontsize=9.5, color="#90a4ae")
+    ax_raw_p.legend(loc="upper left", facecolor="#171d27", edgecolor="#2c3848", fontsize=8.5)
     
-    plt.subplots_adjust(hspace=0.12, top=0.94, bottom=0.08, left=0.08, right=0.95)
-    plt.savefig(out_path, dpi=150, facecolor=fig.get_facecolor(), edgecolor="none")
+    # Left Volume
+    vol_cols = ["#00e676" if closes[i] >= opens[i] else "#ff1744" for i in range(len(sub_klines))]
+    ax_raw_v.bar(x, vols, width=w, color=vol_cols, alpha=0.75)
+    vol_ma = np.convolve(vols, np.ones(min(20, len(vols)))/min(20, len(vols)), mode="same")
+    ax_raw_v.plot(x, vol_ma, color="#00e5ff", linewidth=1.2, linestyle=":", label="20 SMA Vol")
+    ax_raw_v.set_ylabel("Volume", fontsize=9.5, color="#90a4ae")
+    
+    # ── 2. RIGHT PANEL: HEIKIN-ASHI ──
+    for i in range(len(sub_klines)):
+        ho, hh, hl, hc = ha_open[i], ha_high[i], ha_low[i], ha_close[i]
+        is_ha_green = hc >= ho
+        col = "#00e676" if is_ha_green else "#ff1744"
+        ax_ha_p.plot([x[i], x[i]], [hl, hh], color=col, linewidth=1.2, alpha=0.85)
+        rect_y = min(ho, hc)
+        rect_h = max(abs(hc - ho), 0.0001)
+        ax_ha_p.add_patch(patches.Rectangle((x[i]-w/2, rect_y), w, rect_h, facecolor=col, edgecolor=col, alpha=0.85))
+        
+        # Highlight Flat-Bottom (green) / Flat-Top (red)
+        if is_ha_green and ((ho - hl) / max(hh - hl, 0.0001) <= 0.05):
+            ax_ha_p.scatter(x[i], hl - (0.002 * ho), color="#00e5ff", marker="^", s=40, zorder=5)
+        elif not is_ha_green and ((hh - ho) / max(hh - hl, 0.0001) <= 0.05):
+            ax_ha_p.scatter(x[i], hh + (0.002 * ho), color="#ff1744", marker="v", s=40, zorder=5)
+            
+    ax_ha_p.plot(x, ema50, color="#ffab00", linestyle="-", linewidth=1.7, label=f"EMA {EMA_PERIOD}")
+    ax_ha_p.axhline(entry_px, color="#00e5ff", linestyle="--", linewidth=1.4, label=f"Entry: ${entry_px:.4f}")
+    ax_ha_p.axhline(sl_px, color="#ff5252", linestyle="--", linewidth=1.4, label=f"Stop Loss: ${sl_px:.4f}")
+    ax_ha_p.axhline(tp_px, color="#00e676", linestyle="--", linewidth=1.6, label=f"TP (1:{RR_TARGET:.1f} RR): ${tp_px:.4f}")
+    
+    if side == "buy":
+        ax_ha_p.axhspan(entry_px, tp_px, xmin=0.70, xmax=1.0, color="#00e676", alpha=0.12)
+        ax_ha_p.axhspan(sl_px, entry_px, xmin=0.70, xmax=1.0, color="#ff1744", alpha=0.12)
+    else:
+        ax_ha_p.axhspan(tp_px, entry_px, xmin=0.70, xmax=1.0, color="#00e676", alpha=0.12)
+        ax_ha_p.axhspan(entry_px, sl_px, xmin=0.70, xmax=1.0, color="#ff1744", alpha=0.12)
+        
+    ax_ha_p.set_title(f"HEIKIN-ASHI ({TIMEFRAME.upper()}) — MOMENTUM CONFIRMATION", fontsize=12, fontweight="bold", color="#e2e8f0", pad=10, loc="left")
+    ax_ha_p.set_ylabel("HA Price (USDT)", fontsize=9.5, color="#90a4ae")
+    ax_ha_p.legend(loc="upper left", facecolor="#171d27", edgecolor="#2c3848", fontsize=8.5)
+    
+    # Right Volume
+    ha_vol_cols = ["#00e676" if ha_close[i] >= ha_open[i] else "#ff1744" for i in range(len(sub_klines))]
+    ax_ha_v.bar(x, vols, width=w, color=ha_vol_cols, alpha=0.75)
+    ax_ha_v.plot(x, vol_ma, color="#00e5ff", linewidth=1.2, linestyle=":", label="20 SMA Vol")
+    ax_ha_v.set_ylabel("Volume", fontsize=9.5, color="#90a4ae")
+    
+    # Time axis formatting
+    date_labels = [time.strftime("%d %b %H:%M", time.gmtime(t/1000)) for t in times]
+    for ax in [ax_raw_v, ax_ha_v]:
+        ax.set_xticks(x[::5])
+        ax.set_xticklabels(date_labels[::5], rotation=12, fontsize=8.5, color="#90a4ae")
+        
+    fig_side = "LONG" if side == "buy" else "SHORT"
+    fig.suptitle(f"STRATEGY: HEIKIN-ASHI {TIMEFRAME.upper()} MOMENTUM • #{sym}/USDT {fig_side} (1:{RR_TARGET:.1f} RR)", fontsize=15, fontweight="bold", color="#ffffff", y=0.98)
+    
+    plt.subplots_adjust(top=0.92, bottom=0.08, left=0.05, right=0.96)
+    plt.savefig(out_path, dpi=160, facecolor=fig.get_facecolor(), edgecolor="none")
     plt.close()
     
     return out_path
