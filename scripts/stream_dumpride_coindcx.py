@@ -32,7 +32,7 @@ TF_SEC = {"15m": 900, "30m": 1800, "1h": 3600, "2h": 7200, "4h": 14400, "8h": 28
 TF_MS = TF_SEC * 1000
 
 SPIKE_VOL_MULT = float(os.environ.get("DUMPRIDE_SPIKE_VOL", "10.0"))
-MIN_PUMP_PCT = float(os.environ.get("DUMPRIDE_MIN_PUMP_PCT", "0.0"))
+MIN_PUMP_PCT = float(os.environ.get("DUMPRIDE_MIN_PUMP_PCT", "1.0"))
 ATR_PERIOD = int(os.environ.get("DUMPRIDE_ATR_PERIOD", "14"))
 SL_ATR_MULT = float(os.environ.get("DUMPRIDE_SL_ATR_MULT", "1.0"))
 RR_TARGET = float(os.environ.get("DUMPRIDE_RR_TARGET", "2.0"))
@@ -662,11 +662,11 @@ def run_dumpride_engine():
                 time.sleep(2)
                 continue
 
-            # Inside the 15-minute pre-arm window (T-15m to T-3s): Sweep universe every 20s-50s
-            can_sweep = (sec_to_close > 3.0)
-            sweep_interval = 20.0 if sec_to_close <= 120.0 else 50.0
+            # 3. PRE-ARMED UNIVERSE SCAN (Engages between T-15m and T-75s)
+            can_sweep_universe = (sec_to_close > 75.0)
+            sweep_interval = 25.0 if sec_to_close <= 300.0 else 50.0
             
-            if can_sweep and (time.time() - last_prearm_sweep_time >= sweep_interval):
+            if can_sweep_universe and (time.time() - last_prearm_sweep_time >= sweep_interval):
                 last_prearm_sweep_time = time.time()
                 
                 # Fetch universe of active perpetual coins
@@ -716,6 +716,19 @@ def run_dumpride_engine():
                 else:
                     log(f"🔍 [PRE-ARM SCAN] Universe swept ({len(universe)} coins). 0 volume spikes detected (T-{mins_to_close:02d}m {secs_rem:02d}s to {TF.upper()} close).")
                     
+            elif not can_sweep_universe and armed_watchlist:
+                # In final 75s countdown: Freeze universe scan and fast-poll armed candidates directly (<100ms)
+                for sym in list(armed_watchlist.keys()):
+                    try:
+                        updated_sig = evaluate_coin_4h_signal(sym, A, include_forming=True)
+                        if updated_sig and updated_sig["vol_mult"] >= (SPIKE_VOL_MULT * 0.85):
+                            armed_watchlist[sym] = updated_sig
+                            log(f"🔒 [FINAL COUNTDOWN T-{secs_rem:02d}s] #{sym} ARMED: Vol Spike {updated_sig['vol_mult']:.1f}x | Pump +{updated_sig['pump_pct']:.1f}% | Pre-calc SL: {updated_sig['sl_px']:.6g} | TP: {updated_sig['tp_px']:.6g}")
+                    except Exception:
+                        pass
+                time.sleep(2)
+                continue
+                
             time.sleep(1)
         except KeyboardInterrupt:
             log("🛑 Strategy Engine stopped by user.")
