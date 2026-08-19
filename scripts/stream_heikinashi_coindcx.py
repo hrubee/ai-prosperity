@@ -514,17 +514,6 @@ def main():
         
     logger.info(f"Universe discovered: {len(universe)} CoinDCX Perpetual Pairs.")
     
-    # Send daemon startup alert to Telegram group
-    send_telegram_msg(
-        f"🤖 *STRATEGY: HEIKIN-ASHI 15-MINUTE MOMENTUM LIVE*\n\n"
-        f"• *Daemon Status*: `ACTIVE SCANNING`\n"
-        f"• *Timeframe*: `15-Minute Candlesticks`\n"
-        f"• *Filter*: `Pure Momentum (No EMA Filter)`\n"
-        f"• *Risk:Reward Target*: `1:4.0 RR Native Bracket`\n"
-        f"• *Active Universe*: `496 Pairs`\n"
-        f"• *Render Channel*: `{TELEGRAM_CHAT_ID}`"
-    )
-    
     tf_secs = 900 # 15 minutes = 900 seconds
     
     while True:
