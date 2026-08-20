@@ -202,7 +202,7 @@ def render_vol2b2t_chart(sym: str, klines: List[List[float]], signal: Dict[str, 
     
     # Title & Stats
     ax_main.set_title(
-        f"💎 VOL2B2T MOMENTUM RECLAIM | #{sym}/USDT (15M) | Volume Surge: {vol_mult:.1f}x | Target: 1:{RR_TARGET:.1f} RR",
+        f"VOL2B2T MOMENTUM RECLAIM | #{sym}/USDT (15M) | Volume Surge: {vol_mult:.1f}x | Target: 1:{RR_TARGET:.1f} RR",
         color="#ffffff", fontsize=13, fontweight="bold", pad=12, loc="left"
     )
     ax_main.legend(loc="upper left", facecolor="#141822", edgecolor="#222b3a", labelcolor="#e2e8f0", fontsize=9)
