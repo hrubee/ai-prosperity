@@ -267,7 +267,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ current_period_end_iso }),
     }),
-  adminLedgerClients: () =>
+  adminLedgerClients: (source: string = "copier") =>
     req<{
       clients: Array<{
         user_id: string;
@@ -284,13 +284,14 @@ export const api = {
         net_pnl_inr: number;
         is_deleted: boolean;
       }>;
-    }>("/admin/ledger"),
-  adminProfitReports: (params?: { month?: string; from_date?: string; to_date?: string; user_id?: string }) => {
+    }>(`/admin/ledger?source=${encodeURIComponent(source)}`),
+  adminProfitReports: (params?: { month?: string; from_date?: string; to_date?: string; user_id?: string; source?: string }) => {
     const q = new URLSearchParams();
     if (params?.month) q.set("month", params.month);
     if (params?.from_date) q.set("from_date", params.from_date);
     if (params?.to_date) q.set("to_date", params.to_date);
     if (params?.user_id) q.set("user_id", params.user_id);
+    if (params?.source) q.set("source", params.source);
     const qs = q.toString();
     return req<{
       date_range: string;
@@ -304,19 +305,26 @@ export const api = {
         total_fees_inr: number;
         total_net_profit_inr: number;
       };
+      client_summaries: Array<{
+        user_id: string;
+        email: string;
+        name: string;
+        phone: string | null;
+        client_id: string | null;
+        gross_pnl_inr: number;
+        fee_inr: number;
+        net_pnl_inr: number;
+        total_trades: number;
+        wins: number;
+        losses: number;
+        win_rate_pct: number;
+      }>;
       clients: Array<{
         user_id: string;
-        name: string;
-        phone: string;
-        client_id: string;
         email: string;
-        total_trades: number;
-        winning_trades: number;
-        losing_trades: number;
-        win_rate_pct: number;
-        gross_profit_inr: number;
-        fee_inr: number;
-        net_profit_inr: number;
+        name: string;
+        phone: string | null;
+        client_id: string | null;
         date_range: string;
         trades: Array<{
           id: string;
@@ -333,8 +341,8 @@ export const api = {
       }>;
     }>(`/admin/reports/client-profits${qs ? `?${qs}` : ""}`);
   },
-  adminClientProfits: (id: string, timeframe: string = "all", from_date?: string, to_date?: string) => {
-    let url = `/admin/ledger/${id}/profits?timeframe=${encodeURIComponent(timeframe)}`;
+  adminClientProfits: (id: string, timeframe: string = "all", from_date?: string, to_date?: string, source: string = "copier") => {
+    let url = `/admin/ledger/${id}/profits?timeframe=${encodeURIComponent(timeframe)}&source=${encodeURIComponent(source)}`;
     if (from_date) url += `&from_date=${encodeURIComponent(from_date)}`;
     if (to_date) url += `&to_date=${encodeURIComponent(to_date)}`;
     return req<{

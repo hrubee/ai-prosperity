@@ -11,11 +11,12 @@ export default function LedgerClientsPage() {
   const [clients, setClients] = useState<ClientItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [source, setSource] = useState<"copier" | "all">("copier");
 
-  async function load() {
+  async function load(currentSource: "copier" | "all" = source) {
     try {
       setLoading(true);
-      const res = await api.adminLedgerClients();
+      const res = await api.adminLedgerClients(currentSource);
       setClients(res.clients);
     } catch (e: any) {
       console.error("Failed to load ledger clients:", e);
@@ -29,8 +30,8 @@ export default function LedgerClientsPage() {
       window.location.href = "/login";
       return;
     }
-    load();
-  }, []);
+    load(source);
+  }, [source]);
 
   function formatPhone(phone: string | null) {
     if (!phone) return "—";
@@ -65,15 +66,39 @@ export default function LedgerClientsPage() {
               <span className="text-gold-400">📈</span> All Clients Profit &amp; Loss Ledger
             </h1>
             <p className="mt-1 text-sm text-slate-400">
-              Overview of all registered clients, live Tradejini broker connections, date-wise realized PnL, and permanent audit records.
+              Overview of registered clients, live Tradejini broker connections, and algorithmic strategy performance.
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Strategy vs All Broker Filter Toggle */}
+            <div className="flex items-center rounded-lg border border-slate-700/80 bg-slate-900/90 p-1 text-xs font-medium shadow-inner">
+              <button
+                onClick={() => setSource("copier")}
+                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 transition ${
+                  source === "copier"
+                    ? "bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/30 shadow-sm"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <span>⚡</span> Strategy Trades Only
+              </button>
+              <button
+                onClick={() => setSource("all")}
+                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 transition ${
+                  source === "all"
+                    ? "bg-blue-500/20 text-blue-300 font-semibold border border-blue-500/30 shadow-sm"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <span>🏦</span> All Broker Activity
+              </button>
+            </div>
+
             <button
-              className="btn-ghost text-xs text-slate-300 hover:text-white bg-slate-800/80 px-3.5 py-1.5 rounded-lg border border-slate-700/60 shadow-sm"
-              onClick={load}
+              className="btn-ghost text-xs text-slate-300 hover:text-white bg-slate-800/80 px-3.5 py-1.5 rounded-lg border border-slate-700/60 shadow-sm transition"
+              onClick={() => load(source)}
             >
-              🔄 Refresh All Clients
+              🔄 Refresh
             </button>
             <button
               className="text-xs text-slate-400 hover:text-white px-3 py-1.5 transition"

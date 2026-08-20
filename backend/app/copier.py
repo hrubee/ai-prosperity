@@ -29,21 +29,58 @@ def save_log(message: str):
 
 COPIER_STATE_FILE = "copier_state.json"
 
-def is_copier_enabled():
+def _today_ist() -> str:
+    from datetime import datetime, timezone, timedelta
+    now_ist = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    return now_ist.strftime("%Y-%m-%d")
+
+def get_copier_state() -> dict:
+    today = _today_ist()
     try:
         if os.path.exists(COPIER_STATE_FILE):
             with open(COPIER_STATE_FILE, "r") as f:
                 state = json.load(f)
-                return state.get("enabled", True)
-    except:
+                paused_date = state.get("paused_for_date")
+                # If paused for a previous day, auto-unpause for today!
+                if paused_date and paused_date != today:
+                    return {"enabled": True, "paused_for_date": None, "paused_today": False}
+                if paused_date == today:
+                    return {"enabled": False, "paused_for_date": today, "paused_today": True}
+                return {"enabled": state.get("enabled", True), "paused_for_date": None, "paused_today": False}
+    except Exception:
         pass
-    return True
+    return {"enabled": True, "paused_for_date": None, "paused_today": False}
 
-def set_copier_enabled(enabled: bool):
+def is_copier_enabled() -> bool:
+    return get_copier_state()["enabled"]
+
+def set_copier_paused_today(pause: bool = True):
+    today = _today_ist()
+    state = {
+        "enabled": not pause,
+        "paused_for_date": today if pause else None,
+        "paused_today": pause,
+        "updated_at": time.time()
+    }
     try:
         with open(COPIER_STATE_FILE, "w") as f:
-            json.dump({"enabled": enabled}, f)
-    except:
+            json.dump(state, f)
+    except Exception:
+        pass
+    return state
+
+def set_copier_enabled(enabled: bool):
+    today = _today_ist()
+    state = {
+        "enabled": enabled,
+        "paused_for_date": None if enabled else today,
+        "paused_today": not enabled,
+        "updated_at": time.time()
+    }
+    try:
+        with open(COPIER_STATE_FILE, "w") as f:
+            json.dump(state, f)
+    except Exception:
         pass
 
 class ConnectionManager:
@@ -64,7 +101,7 @@ class ConnectionManager:
         for connection in self.active_connections:
             try:
                 await connection.send_text(message)
-            except:
+            except Exception:
                 pass
 
 manager = ConnectionManager()
@@ -77,7 +114,6 @@ def get_logs():
         if os.path.exists(LOG_FILE):
             with open(LOG_FILE, "r") as f:
                 lines = f.readlines()
-                # Get last 200 lines
                 for line in lines[-200:]:
                     if line.strip():
                         logs.append(json.loads(line))
@@ -88,7 +124,29 @@ def get_logs():
 @router.get("/api/copier-status")
 @router.get("/copier-status")
 def get_copier_status():
-    return {"enabled": is_copier_enabled()}
+    st = get_copier_state()
+    return {
+        "enabled": st["enabled"],
+        "paused_today": st["paused_today"],
+        "paused_for_date": st.get("paused_for_date"),
+        "auto_resumes_at": "Tomorrow at 08:30 IST" if st["paused_today"] else None
+    }
+
+@router.post("/api/copier-pause-today")
+@router.post("/copier-pause-today")
+async def pause_copier_today():
+    st = set_copier_paused_today(True)
+    msg = f"🛑 Copier is PAUSED for today ({st.get('paused_for_date')}). Auto-resumes tomorrow at 08:30 IST."
+    await manager.broadcast(json.dumps({"type": "status", "message": msg, "state": st}))
+    return st
+
+@router.post("/api/copier-resume")
+@router.post("/copier-resume")
+async def resume_copier():
+    st = set_copier_paused_today(False)
+    msg = "▶️ Copier has been RESUMED and is actively copying trades."
+    await manager.broadcast(json.dumps({"type": "status", "message": msg, "state": st}))
+    return st
 
 @router.post("/api/copier-toggle")
 @router.post("/copier-toggle")
@@ -96,7 +154,7 @@ async def toggle_copier():
     current = is_copier_enabled()
     new_state = not current
     set_copier_enabled(new_state)
-    msg = f"Copier is now {'ACTIVE' if new_state else 'PAUSED'}"
+    msg = f"Copier is now {'ACTIVE' if new_state else 'PAUSED for today'}"
     await manager.broadcast(json.dumps({"type": "status", "message": msg}))
     return {"enabled": new_state}
 
@@ -460,11 +518,12 @@ async def receive_webhook(request: Request):
                         venue="tradejini",
                         symbol=trading_symbol or str(sym_id),
                         side=action.lower(),
-                        size=float(quantity),
+                        size=float(client_qty),
                         entry_price=float(limit_price or 0.0),
                         fee_inr=20.0,
                         status="filled",
-                        order_id=str(resp)
+                        order_id=str(resp),
+                        notes="copier"
                     )
                     session.add(ledger_entry)
                     session.flush()

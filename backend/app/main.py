@@ -1089,7 +1089,7 @@ def admin_record_profit_ledger(body: RecordProfitLedgerRequest, _: User = Depend
     return {"result": "Recorded permanent profit ledger entry", "id": entry.id}
 
 @app.get("/admin/ledger")
-def admin_get_ledger_clients(_: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
+def admin_get_ledger_clients(source: str = "copier", _: User = Depends(auth.require_admin), db: Session = Depends(get_db)):
     users = db.query(User).all()
 
     # Auto-sync live broker positions for connected Tradejini clients
@@ -1142,6 +1142,7 @@ def admin_get_ledger_clients(_: User = Depends(auth.require_admin), db: Session 
                                 realized_pnl_inr=rpnl,
                                 fee_inr=round(qty * 0.05 + 40.0, 2),
                                 status="closed" if net_qty == 0 else "open",
+                                notes="broker_sync",
                                 executed_at=now_ist.astimezone(timezone.utc),
                                 closed_at=now_ist.astimezone(timezone.utc) if net_qty == 0 else None
                             )
@@ -1157,7 +1158,16 @@ def admin_get_ledger_clients(_: User = Depends(auth.require_admin), db: Session 
                 db.rollback()
                 print(f"[Ledger Global Sync] Client {u.email}: {e}")
 
-    entries = db.query(ClientProfitLedger).order_by(ClientProfitLedger.executed_at.desc()).all()
+    entries_q = db.query(ClientProfitLedger)
+    if source == "copier":
+        entries_q = entries_q.filter(
+            or_(
+                ClientProfitLedger.notes == "copier",
+                ClientProfitLedger.notes.like("%copier%"),
+                ClientProfitLedger.order_id.isnot(None)
+            )
+        )
+    entries = entries_q.order_by(ClientProfitLedger.executed_at.desc()).all()
 
     clients_dict = {}
     
@@ -1221,6 +1231,7 @@ def admin_get_client_profits(
     timeframe: str = "all",
     from_date: str | None = None,
     to_date: str | None = None,
+    source: str = "copier",
     _: User = Depends(auth.require_admin),
     db: Session = Depends(get_db)
 ):
@@ -1272,27 +1283,28 @@ def admin_get_client_profits(
                     sym_obj = p.get("sym") or {}
                     disp_sym = sym_obj.get("dispSym") or sym_obj.get("trdSym") or p.get("symId") or "Unknown"
                     rpnl = float(p.get("realizedPnl") or p.get("dayPos", {}).get("dayRealizedPnl", 0.0) or 0.0)
+                    upnl = float(p.get("unrealizedPnl") or p.get("dayPos", {}).get("dayUnrealizedPnl", 0.0) or 0.0)
                     buy_qty = float(p.get("buyQty", 0) or 0)
                     sell_qty = float(p.get("sellQty", 0) or 0)
                     buy_avg = float(p.get("buyAvgPrice", 0) or 0)
                     sell_avg = float(p.get("sellAvgPrice", 0) or 0)
                     net_qty = float(p.get("netQty", 0) or 0)
-                    qty = max(buy_qty, sell_qty)
-
+                    
                     tj_today_realized_pnl += rpnl
                     tj_positions.append({
                         "symbol": disp_sym,
-                        "product": p.get("product", "normal"),
-                        "net_qty": net_qty,
                         "buy_qty": buy_qty,
                         "sell_qty": sell_qty,
-                        "buy_avg_price": buy_avg,
-                        "sell_avg_price": sell_avg,
-                        "realized_pnl": round(rpnl, 2),
+                        "net_qty": net_qty,
+                        "buy_avg": buy_avg,
+                        "sell_avg": sell_avg,
+                        "realized_pnl": rpnl,
+                        "unrealized_pnl": upnl,
                         "status": "closed" if net_qty == 0 else "open"
                     })
-
+                    
                     # Sync to ClientProfitLedger for today
+                    qty = max(buy_qty, sell_qty)
                     if qty > 0:
                         existing = (
                             db.query(ClientProfitLedger)
@@ -1319,6 +1331,7 @@ def admin_get_client_profits(
                                 realized_pnl_inr=rpnl,
                                 fee_inr=round(qty * 0.05 + 40.0, 2),
                                 status="closed" if net_qty == 0 else "open",
+                                notes="broker_sync",
                                 executed_at=now_ist.astimezone(timezone.utc),
                                 closed_at=now_ist.astimezone(timezone.utc) if net_qty == 0 else None
                             )
@@ -1329,29 +1342,25 @@ def admin_get_client_profits(
                             existing.exit_price = sell_avg if sell_qty > 0 else existing.exit_price
                             existing.size = qty
                             existing.status = "closed" if net_qty == 0 else "open"
-                            if net_qty == 0 and not existing.closed_at:
-                                existing.closed_at = now_ist.astimezone(timezone.utc)
-
+                
                 for t in trades_list:
                     sym_obj = t.get("sym") or {}
                     disp_sym = sym_obj.get("dispSym") or sym_obj.get("trdSym") or t.get("symId") or "Unknown"
                     tj_trades.append({
-                        "order_id": t.get("orderId"),
-                        "fill_id": t.get("fillId"),
+                        "order_id": str(t.get("orderId") or ""),
+                        "trade_id": str(t.get("tradeId") or ""),
                         "symbol": disp_sym,
-                        "side": t.get("side"),
-                        "fill_qty": t.get("fillQty"),
-                        "fill_price": t.get("fillPrice"),
-                        "fill_value": t.get("fillValue"),
-                        "time": t.get("time"),
+                        "side": str(t.get("side") or "").lower(),
+                        "qty": float(t.get("qty", 0) or 0),
+                        "price": float(t.get("price", 0) or 0),
+                        "time": str(t.get("orderTime") or t.get("createdTime") or "")
                     })
-
                 db.commit()
             except Exception as e:
                 db.rollback()
                 print(f"[Ledger Profits Sync] Tradejini error: {e}")
 
-    # 2. Query ClientProfitLedger with Date Range Filtering
+    # 2. Query ClientProfitLedger with Date Range & Source Filtering
     q = (
         db.query(ClientProfitLedger)
         .filter(
@@ -1362,6 +1371,15 @@ def admin_get_client_profits(
             )
         )
     )
+
+    if source == "copier":
+        q = q.filter(
+            or_(
+                ClientProfitLedger.notes == "copier",
+                ClientProfitLedger.notes.like("%copier%"),
+                ClientProfitLedger.order_id.isnot(None)
+            )
+        )
 
     # Timeframe calculation (IST based)
     cutoff = None

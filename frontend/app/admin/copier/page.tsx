@@ -16,8 +16,32 @@ type LogEntry = {
 export default function CopierMonitor() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [status, setStatus] = useState<"Disconnected" | "Live">("Disconnected");
-  const [copierEnabled, setCopierEnabled] = useState<boolean>(true);
+  const [copierState, setCopierState] = useState<{
+    enabled: boolean;
+    paused_today: boolean;
+    paused_for_date: string | null;
+    auto_resumes_at: string | null;
+  }>({
+    enabled: true,
+    paused_today: false,
+    paused_for_date: null,
+    auto_resumes_at: null,
+  });
+  const [toggling, setToggling] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+
+  async function fetchStatus() {
+    try {
+      const res = await fetch("/copier/api/copier-status");
+      const data = await res.json();
+      setCopierState({
+        enabled: Boolean(data.enabled),
+        paused_today: Boolean(data.paused_today),
+        paused_for_date: data.paused_for_date || null,
+        auto_resumes_at: data.auto_resumes_at || null,
+      });
+    } catch {}
+  }
 
   useEffect(() => {
     if (!isAuthed()) {
@@ -33,11 +57,7 @@ export default function CopierMonitor() {
       })
       .catch(() => {});
 
-    // Fetch copier status
-    fetch("/copier/api/copier-status")
-      .then(r => r.json())
-      .then((data: {enabled: boolean}) => setCopierEnabled(data.enabled))
-      .catch(() => {});
+    fetchStatus();
 
     function connect() {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -54,6 +74,9 @@ export default function CopierMonitor() {
         try {
           const data = JSON.parse(event.data);
           setLogs(prev => [data, ...prev].slice(0, 200));
+          if (data.type === "status" || data.state) {
+            fetchStatus();
+          }
         } catch (e) {
           setLogs(prev => [{ type: "system", message: event.data }, ...prev].slice(0, 200));
         }
@@ -72,13 +95,39 @@ export default function CopierMonitor() {
     };
   }, []);
 
-  async function toggleCopier() {
+  async function handlePauseToday() {
+    setToggling(true);
     try {
-      const res = await fetch("/copier/api/copier-toggle", { method: "POST" });
+      const res = await fetch("/copier/api/copier-pause-today", { method: "POST" });
       const data = await res.json();
-      setCopierEnabled(data.enabled);
+      setCopierState({
+        enabled: false,
+        paused_today: true,
+        paused_for_date: data.paused_for_date || null,
+        auto_resumes_at: "Tomorrow at 08:30 IST",
+      });
     } catch(e) {
-      console.error("Failed to toggle copier");
+      console.error("Failed to pause copier today:", e);
+    } finally {
+      setToggling(false);
+    }
+  }
+
+  async function handleResume() {
+    setToggling(true);
+    try {
+      const res = await fetch("/copier/api/copier-resume", { method: "POST" });
+      const data = await res.json();
+      setCopierState({
+        enabled: true,
+        paused_today: false,
+        paused_for_date: null,
+        auto_resumes_at: null,
+      });
+    } catch(e) {
+      console.error("Failed to resume copier:", e);
+    } finally {
+      setToggling(false);
     }
   }
 
@@ -110,15 +159,45 @@ export default function CopierMonitor() {
     <main className="flex h-screen flex-col bg-ink-950">
       <AdminNav />
 
-      <div className="flex items-center justify-between px-6 py-4 border-b border-ink-800 bg-ink-900/30">
-        <h1 className="text-lg font-semibold text-white">Copier Monitor</h1>
-        <div className="flex items-center gap-4">
-          <button 
-            onClick={toggleCopier} 
-            className={`pill text-xs font-semibold cursor-pointer ${copierEnabled ? "bg-red-500/20 text-red-400 hover:bg-red-500/30" : "bg-green-500/20 text-green-400 hover:bg-green-500/30"}`}
-          >
-            {copierEnabled ? "Pause Copier" : "Resume Copier"}
-          </button>
+      <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-4 border-b border-ink-800 bg-ink-900/30">
+        <div>
+          <h1 className="text-lg font-semibold text-white">Copier Monitor</h1>
+          <div className="text-xs text-slate-400">
+            {copierState.paused_today ? (
+              <span className="text-amber-400 font-medium">
+                🛑 Paused for Today ({copierState.paused_for_date}) — Auto-resumes tomorrow at 08:30 IST
+              </span>
+            ) : copierState.enabled ? (
+              <span className="text-emerald-400 font-medium">
+                🟢 Live Active Copying across all connected client accounts
+              </span>
+            ) : (
+              <span className="text-red-400 font-medium">
+                ⏸️ Copier Paused
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          {copierState.paused_today || !copierState.enabled ? (
+            <button 
+              onClick={handleResume} 
+              disabled={toggling}
+              className="px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 border border-emerald-500/30 transition disabled:opacity-50"
+            >
+              {toggling ? "Resuming..." : "▶️ Resume Trading Now"}
+            </button>
+          ) : (
+            <button 
+              onClick={handlePauseToday} 
+              disabled={toggling}
+              className="px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30 transition disabled:opacity-50"
+            >
+              {toggling ? "Pausing..." : "⏸️ Pause Trading for Today"}
+            </button>
+          )}
+
           <span className={`pill text-xs font-semibold ${status === "Live" ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400"}`}>
             {status}
           </span>

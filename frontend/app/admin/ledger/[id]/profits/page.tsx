@@ -14,15 +14,16 @@ export default function ClientProfitsPage({ params }: { params: Promise<{ id: st
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [timeframe, setTimeframe] = useState<TimeframeOption>("all");
+  const [source, setSource] = useState<"copier" | "all">("copier");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
 
-  async function load(selectedTimeframe = timeframe, fDate = fromDate, tDate = toDate) {
+  async function load(selectedTimeframe = timeframe, fDate = fromDate, tDate = toDate, selectedSource = source) {
     try {
       setLoading(true);
       setError(null);
-      const res = await api.adminClientProfits(id, selectedTimeframe, fDate || undefined, tDate || undefined);
+      const res = await api.adminClientProfits(id, selectedTimeframe, fDate || undefined, tDate || undefined, selectedSource);
       setData(res);
       if (res.daily_breakdown && res.daily_breakdown.length > 0) {
         const initialExpanded: Record<string, boolean> = {};
@@ -43,19 +44,19 @@ export default function ClientProfitsPage({ params }: { params: Promise<{ id: st
       window.location.href = "/login";
       return;
     }
-    load(timeframe, fromDate, toDate);
-  }, [id, timeframe]);
+    load(timeframe, fromDate, toDate, source);
+  }, [id, timeframe, source]);
 
   function handleTimeframeChange(tf: TimeframeOption) {
     setTimeframe(tf);
     if (tf !== "custom") {
-      load(tf, "", "");
+      load(tf, "", "", source);
     }
   }
 
   function handleApplyCustomRange() {
     if (fromDate && toDate) {
-      load("custom", fromDate, toDate);
+      load("custom", fromDate, toDate, source);
     }
   }
 
@@ -90,16 +91,40 @@ export default function ClientProfitsPage({ params }: { params: Promise<{ id: st
             </h1>
             {data?.client && (
               <p className="mt-1 text-sm text-slate-400">
-                Live Trade Book &amp; PnL for <span className="text-white font-semibold">{data.client.name}</span> ({data.client.email}) · Tradejini ID: <span className="text-gold-400 font-mono font-bold">{data.client.client_id || "N/A"}</span>
+                Performance for <span className="text-white font-semibold">{data.client.name}</span> ({data.client.email}) · Tradejini ID: <span className="text-gold-400 font-mono font-bold">{data.client.client_id || "N/A"}</span>
               </p>
             )}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Strategy vs All Broker Filter Toggle */}
+            <div className="flex items-center rounded-lg border border-slate-700/80 bg-slate-900/90 p-1 text-xs font-medium shadow-inner">
+              <button
+                onClick={() => setSource("copier")}
+                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 transition ${
+                  source === "copier"
+                    ? "bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/30 shadow-sm"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <span>⚡</span> Strategy Trades Only
+              </button>
+              <button
+                onClick={() => setSource("all")}
+                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 transition ${
+                  source === "all"
+                    ? "bg-blue-500/20 text-blue-300 font-semibold border border-blue-500/30 shadow-sm"
+                    : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <span>🏦</span> All Broker Activity
+              </button>
+            </div>
+
             <button
-              className="btn-ghost text-xs text-slate-300 hover:text-white bg-slate-800/80 px-3.5 py-1.5 rounded-lg border border-slate-700/60 shadow-sm"
-              onClick={() => load()}
+              className="btn-ghost text-xs text-slate-300 hover:text-white bg-slate-800/80 px-3.5 py-1.5 rounded-lg border border-slate-700/60 shadow-sm transition"
+              onClick={() => load(timeframe, fromDate, toDate, source)}
             >
-              🔄 Refresh Live Data
+              🔄 Refresh
             </button>
             <button
               className="text-xs text-slate-400 hover:text-white px-3 py-1.5 transition"
