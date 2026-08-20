@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Logo } from "@/components/nav";
-import { api } from "@/lib/api";
+import { api, isAuthed } from "@/lib/api";
 
 // The static egress IP clients must whitelist in their Tradejini app.
 const STATIC_EGRESS_IP = "187.127.132.39";
@@ -17,16 +17,34 @@ export default function TradejiniConnectPage() {
   const [totpSeed, setTotpSeed] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState("");
+  const [needLogin, setNeedLogin] = useState(false);
+
+  useEffect(() => {
+    if (!isAuthed()) {
+      setNeedLogin(true);
+      setErr("You are not logged in. Please log in to your account first.");
+    }
+  }, []);
 
   async function submitConnect(e: React.FormEvent) {
     e.preventDefault();
     setErr("");
+    if (!isAuthed()) {
+      setNeedLogin(true);
+      setErr("You are not logged in. Please log in to your account first.");
+      return;
+    }
     setSubmitting(true);
     try {
       await api.tradejiniConnect(apiKey, password, totpSeed);
       window.location.href = "/dashboard?tradejini=connected";
     } catch (e: any) {
-      setErr(e.message || "Could not connect — check your API key, login PIN, and TOTP seed");
+      if (e?.status === 401 || e?.message?.includes("token")) {
+        setNeedLogin(true);
+        setErr("Your platform session has expired. Please log in to your account first.");
+      } else {
+        setErr(e.message || "Could not connect — check your API key, login PIN, and TOTP seed");
+      }
     } finally {
       setSubmitting(false);
     }
@@ -133,9 +151,17 @@ export default function TradejiniConnectPage() {
               </div>
 
               {err && (
-                <p className="rounded-lg border border-loss/40 bg-loss/10 px-3 py-2 text-sm text-loss">
-                  {err}
-                </p>
+                <div className="rounded-xl border border-loss/40 bg-loss/10 p-3.5 space-y-2 text-sm text-loss">
+                  <p className="font-medium">{err}</p>
+                  {needLogin && (
+                    <Link
+                      href="/login?next=/connect/tradejini"
+                      className="btn-gold block text-center py-2 text-xs font-bold text-ink-950 shadow-md"
+                    >
+                      Click Here to Log In First ↗
+                    </Link>
+                  )}
+                </div>
               )}
 
               <div>
