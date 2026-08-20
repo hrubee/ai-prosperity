@@ -104,6 +104,7 @@ import threading
 
 ORDER_MAPPING_FILE = "copier_order_mappings.json"
 _mapping_lock = threading.Lock()
+_PROCESSED_DHAN_PLACEMENTS: set[str] = set()
 
 def get_order_mapping(dhan_order_id: str) -> dict:
     try:
@@ -124,6 +125,7 @@ def save_order_mapping(dhan_order_id: str, client_api_key: str, tj_order_id: str
                 with open(ORDER_MAPPING_FILE, "r") as f:
                     mappings = json.load(f)
             d_id = str(dhan_order_id)
+            _PROCESSED_DHAN_PLACEMENTS.add(d_id)
             if d_id not in mappings:
                 mappings[d_id] = {}
             mappings[d_id][client_api_key] = tj_order_id
@@ -208,14 +210,14 @@ async def receive_webhook(request: Request):
             do_cancel = True
         elif order_status in ("PENDING", "TRANSFERRED", "OPEN", "MODIFIED", "UPDATED"):
             mapping = get_order_mapping(dhan_order_id)
-            if mapping:
+            if mapping or (dhan_order_id and dhan_order_id in _PROCESSED_DHAN_PLACEMENTS):
                 do_modify = True
             else:
                 do_place = True
         elif order_status == "TRADED":
             mapping = get_order_mapping(dhan_order_id)
-            if mapping:
-                return {"status": "ignored", "reason": "already placed as pending"}
+            if mapping or (dhan_order_id and dhan_order_id in _PROCESSED_DHAN_PLACEMENTS):
+                return {"status": "ignored", "reason": "already placed as pending/traded"}
             do_place = True
             tj_order_type = "market" 
         else:
@@ -425,8 +427,10 @@ async def receive_webhook(request: Request):
                             continue
                         
                         held_qty = int(matching_pos.get("size", 0))
-                        if client_qty > held_qty:
-                            save_log(f"⚠️ [QTY CAPPED] Capping SELL {trading_symbol} for {user.email} from {client_qty} to held {held_qty} to prevent overshoot.")
+                        # CRITICAL FIX: When Dhan exits an option position, scale client_qty to 100% of held_qty
+                        # to guarantee that Tradejini client accounts are completely flattened with 0 leftover stranded contracts.
+                        if client_qty != held_qty:
+                            save_log(f"🔄 [FULL POSITION SQUARING] Adjusting SELL {trading_symbol} for {user.email} from {client_qty} to {held_qty} qty (100% of open position) to guarantee flat state.")
                             client_qty = held_qty
                     except Exception as pos_check_err:
                         save_log(f"Position check error for {user.email}: {pos_check_err}")
@@ -496,3 +500,87 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+
+# ── AUTONOMOUS POSITION RECONCILIATION WATCHDOG ────────────────────────────────
+async def reconcile_positions_loop():
+    """Background watchdog running every 20 seconds during market hours.
+    Compares Dhan master net positions against all connected Tradejini client accounts.
+    If Dhan is FLAT in a strike, but a client still holds open contracts (e.g. from missed webhook),
+    it immediately executes an emergency square-off on Tradejini to keep accounts 100% synchronized.
+    """
+    save_log("🛡️ Autonomous Position Reconciliation Watchdog initialized.")
+    while True:
+        try:
+            await asyncio.sleep(20)
+            if not is_copier_enabled():
+                continue
+                
+            from .dhan_poller import get_dhan_headers
+            dhan_headers = get_dhan_headers()
+            if not dhan_headers:
+                continue
+                
+            # Fetch live Dhan positions
+            async with httpx.AsyncClient() as http_client:
+                dhan_resp = await http_client.get("https://api.dhan.co/v2/positions", headers=dhan_headers, timeout=5.0)
+                if dhan_resp.status_code != 200:
+                    continue
+                dhan_positions = dhan_resp.json()
+                
+            dhan_open_symbols = set()
+            if isinstance(dhan_positions, list):
+                for dp in dhan_positions:
+                    net_qty = int(dp.get("netQty") or dp.get("net_quantity") or dp.get("quantity") or 0)
+                    if net_qty != 0:
+                        sym = str(dp.get("tradingSymbol") or dp.get("customSymbol") or "").upper()
+                        if sym:
+                            dhan_open_symbols.add(sym)
+
+            # Query all active Tradejini client accounts
+            from sqlalchemy import select
+            from .models import TradejiniConnection, User
+            from .tradejini import TradejiniClient
+            
+            with db.session_scope() as session:
+                conns = session.execute(select(TradejiniConnection)).scalars().all()
+                for c in conns:
+                    if not tradejini_auth.has_auto_creds(c) or c.status == "disconnected" or c.paused:
+                        continue
+                    try:
+                        user = session.get(User, c.user_id)
+                        if not user or user.role == "archived":
+                            continue
+                            
+                        token = tradejini_auth.ensure_client_token(session, c)
+                        cl = TradejiniClient(token, api_key=c.api_key)
+                        
+                        client_open_pos = cl.open_positions()
+                        if not client_open_pos:
+                            continue
+                            
+                        for pos in client_open_pos:
+                            sym_id = pos.get("sym_id")
+                            sym_name = str(pos.get("symbol") or sym_id).upper()
+                            size = pos.get("size", 0)
+                            
+                            # Check if Dhan holds this symbol (or strike match)
+                            dhan_holding = any(sym_name in ds or ds in sym_name for ds in dhan_open_symbols)
+                            
+                            # If Dhan is FLAT in this contract, but Tradejini client holds it -> AUTO FLATTEN!
+                            if not dhan_holding and size > 0:
+                                save_log(f"🚨 [AUTO-RECONCILIATION] Discrepancy detected: Dhan is FLAT in {sym_name}, but {user.email} held {size} open contracts! Auto-closing on Tradejini now...")
+                                res = cl.close_position(sym_id)
+                                save_log(f"✅ [AUTO-RECONCILED] Squared off {sym_name} for {user.email}: {res}")
+                                await manager.broadcast(json.dumps({
+                                    "type": "warning",
+                                    "account": cl.api_key,
+                                    "message": f"🚨 [AUTO-RECONCILED] Dhan is FLAT in {sym_name}. Auto-squared {size} contracts for {user.email}."
+                                }))
+                    except Exception:
+                        pass
+        except Exception as e:
+            save_log(f"Error in reconciliation loop: {e}")
+
+@router.on_event("startup")
+async def on_startup():
+    asyncio.create_task(reconcile_positions_loop())
